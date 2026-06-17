@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rules - SOC Analysis</title>
+</head>
+<body style="background: #0f1419; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0;">
+    <nav style="background: #1a1f2e; padding: 1rem 2rem; border-bottom: 2px solid #0066cc;">
+        <h1 style="margin: 0; color: #0066cc;">🛡️ SOC Analysis Platform</h1>
+        <ul style="list-style: none; display: flex; gap: 2rem; margin-top: 1rem;">
+            <li><a href="/dashboard" style="color: #fff; text-decoration: none;">Dashboard</a></li>
+            <li><a href="/alerts" style="color: #fff; text-decoration: none;">Alerts</a></li>
+            <li><a href="/events" style="color: #fff; text-decoration: none;">Events</a></li>
+            <li><a href="/rules" style="color: #0066cc; text-decoration: none; font-weight: bold;">Rules</a></li>
+        </ul>
+    </nav>
+
+    <div style="max-width: 1400px; margin: 0 auto; padding: 2rem;">
+        <h2 style="margin-bottom: 2rem;">Detection Rules</h2>
+        
+        <button onclick="showCreateRule()" style="background: #0066cc; color: #fff; border: none; padding: 0.7rem 1.5rem; border-radius: 4px; cursor: pointer; margin-bottom: 1rem;">+ Create New Rule</button>
+
+        <table style="width: 100%; border-collapse: collapse; background: #1a1f2e;">
+            <thead>
+                <tr style="background: #0f1419;">
+                    <th style="padding: 1rem; text-align: left; border-bottom: 2px solid #0066cc;">Name</th>
+                    <th style="padding: 1rem; text-align: left; border-bottom: 2px solid #0066cc;">Event Type</th>
+                    <th style="padding: 1rem; text-align: left; border-bottom: 2px solid #0066cc;">Severity</th>
+                    <th style="padding: 1rem; text-align: left; border-bottom: 2px solid #0066cc;">Enabled</th>
+                    <th style="padding: 1rem; text-align: left; border-bottom: 2px solid #0066cc;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="rulesBody">
+                <tr><td colspan="5" style="padding: 1rem; text-align: center; color: #888;">Loading rules...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        async function loadRules() {
+            const response = await fetch('/api/rules?per_page=50');
+            const data = await response.json();
+            
+            const tbody = document.getElementById('rulesBody');
+            tbody.innerHTML = data.rules.map(rule => `
+                <tr style="border-bottom: 1px solid #2a2f3e;">
+                    <td style="padding: 1rem;">${rule.name}</td>
+                    <td style="padding: 1rem;">${rule.event_type || '-'}</td>
+                    <td style="padding: 1rem;"><span style="background: ${rule.severity === 'CRITICAL' ? '#c41e3a' : '#ff6b6b'}; padding: 0.3rem 0.8rem; border-radius: 3px; font-size: 0.8rem;">${rule.severity}</span></td>
+                    <td style="padding: 1rem;">${rule.enabled ? '✅' : '❌'}</td>
+                    <td style="padding: 1rem;">
+                        <button onclick="editRule(${rule.id})" style="background: #0066cc; color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 3px; cursor: pointer; margin-right: 0.5rem;">Edit</button>
+                        <button onclick="deleteRule(${rule.id})" style="background: #c41e3a; color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 3px; cursor: pointer;">Delete</button>
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" style="padding: 1rem; text-align: center;">No rules found</td></tr>';
+        }
+
+        function showCreateRule() {
+            const name = prompt('Rule name:');
+            if (!name) return;
+            const eventType = prompt('Event type (e.g., ProcessCreate):');
+            if (!eventType) return;
+            const severity = prompt('Severity (CRITICAL/HIGH/MEDIUM/LOW):');
+            
+            alert('Rule creation form - implement in modal');
+        }
+
+        function editRule(id) {
+            alert(`Edit rule ${id}`);
+        }
+
+        async function deleteRule(id) {
+            if (confirm('Are you sure?')) {
+                await fetch(`/api/rules/${id}`, { method: 'DELETE' });
+                loadRules();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadRules);
+    </script>
+</body>
+</html>
