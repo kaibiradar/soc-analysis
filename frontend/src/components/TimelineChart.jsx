@@ -1,15 +1,8 @@
 import { useEffect, useState } from "react";
 import { getTimeline } from "../api/api";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
+  LineElement, Title, Tooltip, Legend, Filler,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 
@@ -54,54 +47,50 @@ const options = {
 
 function TimelineChart() {
   const [chartData, setChartData] = useState({ labels: [], datasets: [] });
+  const [error, setError]         = useState(null);
+
+  const fetchData = async () => {
+    try {
+      const data = await getTimeline();
+      setChartData({
+        labels: data.labels || [],
+        datasets: [{
+          label: "Events",
+          data: data.values || [],
+          borderColor: "#00d2ff",
+          backgroundColor: (ctx) => {
+            const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+            g.addColorStop(0, "rgba(0,210,255,0.18)");
+            g.addColorStop(1, "rgba(0,210,255,0.01)");
+            return g;
+          },
+          fill: true, tension: 0.45, borderWidth: 2,
+          pointRadius: 4, pointBackgroundColor: "#00d2ff",
+          pointBorderColor: "#070d1a", pointBorderWidth: 2, pointHoverRadius: 6,
+        }],
+      });
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const data = await getTimeline();
-        setChartData({
-          labels: data.labels || [],
-          datasets: [
-            {
-              label: "Events",
-              data: data.values || [],
-              borderColor: "#00d2ff",
-              backgroundColor: (ctx) => {
-                const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-                gradient.addColorStop(0,   "rgba(0,210,255,0.18)");
-                gradient.addColorStop(1,   "rgba(0,210,255,0.01)");
-                return gradient;
-              },
-              fill: true,
-              tension: 0.45,
-              borderWidth: 2,
-              pointRadius: 4,
-              pointBackgroundColor: "#00d2ff",
-              pointBorderColor: "#070d1a",
-              pointBorderWidth: 2,
-              pointHoverRadius: 6,
-            },
-          ],
-        });
-      } catch (err) {
-        console.error("TimelineChart Error:", err);
-      }
-    };
     fetchData();
+    const id = setInterval(fetchData, 30000);
+    return () => clearInterval(id);
   }, []);
 
   return (
     <div className="panel">
       <div className="panel-header">
-        <div className="panel-title">
-          <TrendIcon />
-          Event Timeline
-        </div>
-        <span className="panel-badge">last 6 intervals</span>
+        <div className="panel-title"><TrendIcon />Event Timeline</div>
+        <span className="panel-badge">last 60 min</span>
       </div>
-      <div className="chart-wrap">
-        <Line data={chartData} options={options} />
-      </div>
+      {error
+        ? <div className="panel-error">⚠ {error}</div>
+        : <div className="chart-wrap"><Line data={chartData} options={options} /></div>
+      }
     </div>
   );
 }

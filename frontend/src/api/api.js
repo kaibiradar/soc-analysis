@@ -1,22 +1,33 @@
 // All /api/* requests are proxied to http://127.0.0.1:5000 by Vite.
-// Use relative URLs so this also works in production builds.
 
-export async function getStats() {
-  const response = await fetch("/api/stats");
-  return response.json();
-}
+const handle = async (res) => {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "API error");
+  }
+  return res.json();
+};
 
-export async function getTimeline() {
-  const response = await fetch("/api/events_timeline");
-  return response.json();
-}
+export const getStats = () =>
+  fetch("/api/stats").then(handle);
 
-export async function getMitre() {
-  const response = await fetch("/api/mitre");
-  return response.json();
-}
+export const getTimeline = () =>
+  fetch("/api/events_timeline").then(handle);
 
-export async function getAlerts() {
-  const response = await fetch("/api/alerts?per_page=10");
-  return response.json();
-}
+export const getMitre = () =>
+  fetch("/api/mitre").then(handle);
+
+export const getAlerts = ({ page = 1, perPage = 10, status = "", severity = "", search = "" } = {}) => {
+  const params = new URLSearchParams({ page, per_page: perPage });
+  if (status)   params.set("status", status);
+  if (severity) params.set("severity", severity);
+  if (search)   params.set("search", search);
+  return fetch(`/api/alerts?${params}`).then(handle);
+};
+
+export const updateAlert = (id, body) =>
+  fetch(`/api/alerts/${id}`, {
+    method:  "PUT",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify(body),
+  }).then(handle);
