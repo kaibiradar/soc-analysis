@@ -220,31 +220,37 @@ def delete_rule(rule_id):
     db.session.commit()
     return jsonify({'status': 'deleted'})
 
+
 # ==================== STATISTICS ====================
 
 @api_bp.route('/stats', methods=['GET'])
 def get_statistics():
-    """Get dashboard statistics"""
+
     from sqlalchemy import func
-    
+
     total_events = Event.query.count()
     total_alerts = Alert.query.count()
-    
-    severity_counts = db.session.query(
-        Alert.severity, func.count(Alert.id)
-    ).group_by(Alert.severity).all()
-    
-    status_counts = db.session.query(
-        Alert.status, func.count(Alert.id)
-    ).group_by(Alert.status).all()
-    
-    return jsonify({
-        'total_events': total_events,
-        'total_alerts': total_alerts,
-        'severity_distribution': {s: c for s, c in severity_counts},
-        'status_distribution': {s: c for s, c in status_counts},
-    })
 
+    severity_counts = db.session.query(
+        Alert.severity,
+        func.count(Alert.id)
+    ).group_by(Alert.severity).all()
+
+    severity_distribution = {
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+    }
+
+    for sev, count in severity_counts:
+        severity_distribution[sev] = count
+
+    return jsonify({
+        "total_events": total_events,
+        "total_alerts": total_alerts,
+        "severity_distribution": severity_distribution
+    })
 # ==================== HELPER FUNCTIONS ====================
 
 def check_event_against_rules(event):
@@ -278,3 +284,71 @@ def check_event_against_rules(event):
             db.session.add(alert)
     
     db.session.commit()
+# ==================== MITRE ATT&CK ====================
+
+MITRE_MAP = {
+    "T1059": "Command & Scripting Interpreter",
+    "T1003": "OS Credential Dumping",
+    "T1021": "Remote Services",
+    "T1047": "WMI Execution",
+    "T1071": "Application Layer Protocol",
+    "T1112": "Modify Registry",
+    "T1078": "Valid Accounts",
+    "T1110": "Brute Force",
+    "T1566": "Phishing",
+}
+
+@api_bp.route('/mitre', methods=['GET'])
+def get_mitre():
+    """Return MITRE techniques derived from tags on enabled rules."""
+    rules = Rule.query.filter_by(enabled=True).all()
+
+    seen = {}
+    for rule in rules:
+        for tag in (rule.tags or []):
+            tag = tag.upper()
+            if tag.startswith("T") and tag in MITRE_MAP and tag not in seen:
+                seen[tag] = MITRE_MAP[tag]
+
+    # Fall back to defaults if DB has no tagged rules yet
+    if not seen:
+        seen = {
+            "T1059": "Command & Scripting Interpreter",
+            "T1003": "OS Credential Dumping",
+            "T1047": "WMI Execution",
+            "T1071": "Application Layer Protocol",
+            "T1112": "Modify Registry",
+        }
+
+    return jsonify({
+        "techniques": [{"id": k, "name": v} for k, v in seen.items()]
+    })
+
+
+
+
+# ==================== EVENTS TIMELINE ====================
+
+@api_bp.route('/events_timeline', methods=['GET'])
+def get_events_timeline():
+    """Return event counts grouped into 10-minute buckets for the last hour."""
+    from sqlalchemy import func, text
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    buckets = []
+
+    for i in range(5, -1, -1):
+        bucket_start = now - timedelta(minutes=(i + 1) * 10)
+        bucket_end   = now - timedelta(minutes=i * 10)
+        count = Event.query.filter(
+            Event.timestamp >= bucket_start,
+            Event.timestamp <  bucket_end
+        ).count()
+        label = bucket_start.strftime("%H:%M")
+        buckets.append((label, count))
+
+    return jsonify({
+        "labels": [b[0] for b in buckets],
+        "values": [b[1] for b in buckets],
+    })

@@ -1,5 +1,5 @@
-from flask import Flask, render_template, jsonify
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, jsonify
+from flask_cors import CORS
 import logging
 from config import config
 from database.db import db
@@ -12,6 +12,9 @@ def create_app(config_name='development'):
     
     # Initialize database
     db.init_app(app)
+    
+    # Enable CORS so the React dev server (port 5173) can call the API
+    CORS(app)
     
     # Configure logging
     logging.basicConfig(
@@ -28,10 +31,6 @@ def create_app(config_name='development'):
     
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(dashboard_bp)
-    
-    @app.route('/')
-    def index():
-        return render_template('dashboard.html')
     
     @app.route('/health')
     def health():

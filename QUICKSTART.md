@@ -2,19 +2,34 @@
 
 ## First Time Setup
 
-### 1. Install Dependencies
+### 1. Start Everything on Windows
+```bat
+run-dev.cmd
+```
+
+This opens the Flask backend at http://127.0.0.1:5000 and the React dashboard at http://127.0.0.1:5173.
+
+### 2. Install Dependencies Manually
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Initialize Database
+For the frontend:
+```bat
+cd frontend
+npm.cmd install
+```
+
+Use `npm.cmd` on PowerShell/CMD to avoid PowerShell execution-policy errors from `npm.ps1`.
+
+### 3. Initialize Database
 ```bash
 python app.py
 ```
 
 The Flask app will create an empty SQLite database on first run.
 
-### 3. Load Sample Rules (Optional)
+### 4. Load Sample Rules (Optional)
 ```bash
 mkdir scripts
 python scripts/init_sample_data.py
@@ -22,12 +37,17 @@ python scripts/init_sample_data.py
 
 This creates example detection rules for testing.
 
-### 4. Start the Application
+### 5. Start the Application Manually
 ```bash
-python app.py
+run-backend.cmd
 ```
 
-Visit http://localhost:5000 to see the dashboard.
+In a second terminal:
+```bat
+run-frontend.cmd
+```
+
+Visit http://127.0.0.1:5173 to see the dashboard.
 
 ## API Quick Reference
 

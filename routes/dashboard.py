@@ -1,19 +1,5 @@
-from flask import Blueprint, render_template
+from flask import Blueprint
 
+# Dashboard blueprint — HTML templates removed; frontend is served by Vite (React).
+# All API endpoints live in routes/api.py under the /api prefix.
 dashboard_bp = Blueprint('dashboard', __name__)
-
-@dashboard_bp.route('/dashboard')
-def dashboard():
-    return render_template('dashboard.html')
-
-@dashboard_bp.route('/alerts')
-def alerts():
-    return render_template('alerts.html')
-
-@dashboard_bp.route('/rules')
-def rules():
-    return render_template('rules.html')
-
-@dashboard_bp.route('/events')
-def events():
-    return render_template('events.html')
