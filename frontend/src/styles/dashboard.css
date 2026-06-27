@@ -871,71 +871,148 @@ body {
 }
 
 /* ── Live Event Feed ─────────────────────────────────────── */
-.live-feed-scroll {
-  max-height: 420px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
 
-.feed-row {
+/* Panel override — remove overflow:hidden so rows aren't clipped */
+.lef-panel { overflow: visible; }
+
+/* Column header row */
+.lef-thead {
   display: grid;
-  grid-template-columns: 120px 140px 1fr 80px;
-  gap: 10px;
-  align-items: center;
-  padding: 7px 4px;
-  border-bottom: 1px solid var(--border-dim);
-  font-size: 11px;
-  transition: background 0.15s;
-}
-
-.feed-row:hover { background: rgba(0, 210, 255, 0.025); }
-.feed-row:last-child { border-bottom: none; }
-
-.feed-row-new {
-  animation: feed-flash 1.2s ease-out;
-}
-
-@keyframes feed-flash {
-  0%   { background: rgba(0, 210, 255, 0.14); }
-  100% { background: transparent; }
-}
-
-.feed-type {
+  grid-template-columns: 68px 130px 130px 90px 1fr;
+  gap: 8px;
+  padding: 0 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
-.feed-host {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Scrollable body */
+.lef-scroll {
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.feed-desc {
-  color: var(--text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ── Data row ──────────────────────────────────────────────── */
+.lef-row {
+  display: grid;
+  grid-template-columns: 68px 130px 130px 90px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--border-dim);
+  transition: background 0.12s;
+  min-height: 34px;
 }
 
-.feed-time {
+.lef-row:last-child  { border-bottom: none; }
+.lef-row:hover       { background: rgba(0, 210, 255, 0.03); }
+
+/* ── Entrance animation: fade + slide down from -8px ──────── */
+@keyframes lef-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    background: rgba(0, 210, 255, 0.12);
+  }
+  60% {
+    background: rgba(0, 210, 255, 0.06);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    background: transparent;
+  }
+}
+
+.lef-row-enter {
+  animation: lef-enter 0.55s var(--ease) both;
+}
+
+/* ── Cell styles ──────────────────────────────────────────── */
+.lef-time {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-muted);
-  text-align: right;
   white-space: nowrap;
+  flex-shrink: 0;
 }
+
+.lef-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lef-host {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lef-user {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lef-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Pause button state ───────────────────────────────────── */
+.lef-pause-btn { transition: color 0.2s, border-color 0.2s; }
+
+.lef-paused {
+  color: var(--sev-medium) !important;
+  border-color: rgba(251,191,36,0.4) !important;
+  background: rgba(251,191,36,0.08) !important;
+}
+
+/* ── Paused banner ────────────────────────────────────────── */
+.lef-paused-banner {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: rgba(251,191,36,0.07);
+  border: 1px solid rgba(251,191,36,0.2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--sev-medium);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lef-paused-banner button {
+  background: rgba(251,191,36,0.12);
+  border: 1px solid rgba(251,191,36,0.3);
+  border-radius: 4px;
+  color: var(--sev-medium);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.lef-paused-banner button:hover { background: rgba(251,191,36,0.22); }
 
 /* ── Row flash animation for new live alerts ─────────────── */
 .row-flash {

@@ -17,7 +17,7 @@ import Toast          from "../components/Toast";
 import { useSocket }        from "../hooks/useSocket";
 import { useNotifications } from "../hooks/useNotifications";
 
-const MAX_LIVE_EVENTS = 50;
+const MAX_LIVE_EVENTS = 20;
 
 function Dashboard() {
   const [liveStats,     setLiveStats]     = useState(null);
