@@ -799,3 +799,160 @@ body {
   text-align: right;
   padding-right: 0;
 }
+
+/* ============================================================
+   WEBSOCKET / REAL-TIME UPGRADES
+   ============================================================ */
+
+/* ── WebSocket status badge ─────────────────────────────── */
+.header-ver {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.08em;
+}
+
+.ws-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+  transition: all 0.3s;
+}
+
+.ws-connected {
+  color: var(--cyan-bright);
+  border-color: rgba(0, 210, 255, 0.3);
+  background: rgba(0, 210, 255, 0.07);
+}
+
+.ws-disconnected {
+  color: var(--sev-critical);
+  border-color: rgba(244, 63, 94, 0.3);
+  background: rgba(244, 63, 94, 0.07);
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Live dot (used in LiveEventFeed panel title) ────────── */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sev-critical);
+  box-shadow: 0 0 8px var(--sev-critical);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+  margin-left: 4px;
+}
+
+/* ── Detections row — alerts + live feed side by side ───── */
+.detections-row {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .detections-row { grid-template-columns: 1fr; }
+}
+
+/* ── Live Event Feed ─────────────────────────────────────── */
+.live-feed-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.feed-row {
+  display: grid;
+  grid-template-columns: 120px 140px 1fr 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--border-dim);
+  font-size: 11px;
+  transition: background 0.15s;
+}
+
+.feed-row:hover { background: rgba(0, 210, 255, 0.025); }
+.feed-row:last-child { border-bottom: none; }
+
+.feed-row-new {
+  animation: feed-flash 1.2s ease-out;
+}
+
+@keyframes feed-flash {
+  0%   { background: rgba(0, 210, 255, 0.14); }
+  100% { background: transparent; }
+}
+
+.feed-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-host {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── Row flash animation for new live alerts ─────────────── */
+.row-flash {
+  animation: row-flash-anim 1.4s ease-out;
+}
+
+@keyframes row-flash-anim {
+  0%   { background: rgba(0, 210, 255, 0.16); }
+  100% { background: rgba(0, 210, 255, 0.025); }
+}
+
+/* ── Stat cards flash on live update ────────────────────── */
+.cards-flash .card-value {
+  animation: val-flash 0.5s ease-out;
+}
+
+@keyframes val-flash {
+  0%   { opacity: 0.4; transform: scale(0.96); }
+  100% { opacity: 1;   transform: scale(1); }
+}

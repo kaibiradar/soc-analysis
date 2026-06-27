@@ -15,81 +15,76 @@ const TrendIcon = () => (
   </svg>
 );
 
-const options = {
-  responsive: true,
-  maintainAspectRatio: true,
+const buildDataset = (labels, values) => ({
+  labels,
+  datasets: [{
+    label: "Events",
+    data: values,
+    borderColor: "#00d2ff",
+    backgroundColor: (ctx) => {
+      const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+      g.addColorStop(0, "rgba(0,210,255,0.22)");
+      g.addColorStop(1, "rgba(0,210,255,0.01)");
+      return g;
+    },
+    fill: true, tension: 0.45, borderWidth: 2,
+    pointRadius: 4, pointBackgroundColor: "#00d2ff",
+    pointBorderColor: "#070d1a", pointBorderWidth: 2, pointHoverRadius: 6,
+  }],
+});
+
+const OPTIONS = {
+  responsive: true, maintainAspectRatio: true,
+  animation: { duration: 400 },
   plugins: {
     legend: { display: false },
     tooltip: {
-      backgroundColor: "#0f2038",
-      borderColor: "rgba(0,210,255,0.2)",
-      borderWidth: 1,
-      titleColor: "#00d2ff",
-      bodyColor: "#e2eaf6",
+      backgroundColor: "#0f2038", borderColor: "rgba(0,210,255,0.2)",
+      borderWidth: 1, titleColor: "#00d2ff", bodyColor: "#e2eaf6",
       titleFont: { family: "'JetBrains Mono'", size: 11 },
-      bodyFont:  { family: "'JetBrains Mono'", size: 12 },
-      padding: 10,
+      bodyFont:  { family: "'JetBrains Mono'", size: 12 }, padding: 10,
     },
   },
   scales: {
-    x: {
-      ticks: { color: "#3d5a7a", font: { family: "'JetBrains Mono'", size: 11 } },
-      grid:  { color: "rgba(0,210,255,0.04)" },
-      border: { color: "rgba(0,210,255,0.1)" },
-    },
-    y: {
-      ticks: { color: "#3d5a7a", font: { family: "'JetBrains Mono'", size: 11 } },
-      grid:  { color: "rgba(0,210,255,0.06)" },
-      border: { color: "transparent" },
-    },
+    x: { ticks: { color: "#3d5a7a", font: { family: "'JetBrains Mono'", size: 11 } }, grid: { color: "rgba(0,210,255,0.04)" }, border: { color: "rgba(0,210,255,0.1)" } },
+    y: { ticks: { color: "#3d5a7a", font: { family: "'JetBrains Mono'", size: 11 } }, grid: { color: "rgba(0,210,255,0.06)" }, border: { color: "transparent" } },
   },
 };
 
-function TimelineChart() {
+function TimelineChart({ liveTimeline }) {
   const [chartData, setChartData] = useState({ labels: [], datasets: [] });
-  const [error, setError]         = useState(null);
+  const [error,     setError]     = useState(null);
 
   const fetchData = async () => {
     try {
-      const data = await getTimeline();
-      setChartData({
-        labels: data.labels || [],
-        datasets: [{
-          label: "Events",
-          data: data.values || [],
-          borderColor: "#00d2ff",
-          backgroundColor: (ctx) => {
-            const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-            g.addColorStop(0, "rgba(0,210,255,0.18)");
-            g.addColorStop(1, "rgba(0,210,255,0.01)");
-            return g;
-          },
-          fill: true, tension: 0.45, borderWidth: 2,
-          pointRadius: 4, pointBackgroundColor: "#00d2ff",
-          pointBorderColor: "#070d1a", pointBorderWidth: 2, pointHoverRadius: 6,
-        }],
-      });
+      const d = await getTimeline();
+      setChartData(buildDataset(d.labels || [], d.values || []));
       setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
+    } catch (e) { setError(e.message); }
   };
 
   useEffect(() => {
     fetchData();
-    const id = setInterval(fetchData, 30000);
+    const id = setInterval(fetchData, 60000);   // fallback REST refresh
     return () => clearInterval(id);
   }, []);
+
+  // Accept live WebSocket push
+  useEffect(() => {
+    if (liveTimeline?.labels) {
+      setChartData(buildDataset(liveTimeline.labels, liveTimeline.values));
+    }
+  }, [liveTimeline]);
 
   return (
     <div className="panel">
       <div className="panel-header">
         <div className="panel-title"><TrendIcon />Event Timeline</div>
-        <span className="panel-badge">last 60 min</span>
+        <span className="panel-badge">30-min buckets</span>
       </div>
       {error
         ? <div className="panel-error">⚠ {error}</div>
-        : <div className="chart-wrap"><Line data={chartData} options={options} /></div>
+        : <div className="chart-wrap"><Line data={chartData} options={OPTIONS} /></div>
       }
     </div>
   );

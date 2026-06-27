@@ -197,9 +197,10 @@ def seed():
         # ── seed events spread over last 2 hours ──
         now = datetime.utcnow()
         event_objects = []
+        # Spread events across the last 50 minutes so they always appear
+        # in the timeline chart (which covers the last 3 hours in 30-min buckets)
         for i, e in enumerate(EVENTS_DATA):
-            # spread timestamps backwards — most recent first
-            minutes_ago = i * 7 + random.randint(0, 4)
+            minutes_ago = int((i / len(EVENTS_DATA)) * 50) + random.randint(0, 3)
             ts = now - timedelta(minutes=minutes_ago)
             event = Event(
                 event_id=e["event_id"],
