@@ -1,305 +1,438 @@
-import logging
-from datetime import datetime, timedelta, timezone
-
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
-
-from database.db import db, Event, Alert, Rule
+from sqlalchemy.orm import joinedload
+from database.db import db, Event, Alert, Rule, Incident
 from detection.rules import RuleEngine
-from validators import (
-    CreateEventSchema, CreateRuleSchema, UpdateRuleSchema,
-    UpdateAlertSchema, validate_body,
-)
+import logging
 
-api_bp      = Blueprint("api", __name__)
-logger      = logging.getLogger(__name__)
+api_bp = Blueprint('api', __name__)
+logger = logging.getLogger(__name__)
 rule_engine = RuleEngine()
 
 
-def _broadcast(fn_name: str, *args, **kwargs):
-    """
-    Lazy import broadcast helpers to avoid circular imports at module load.
-    If socketio isn't available (e.g. tests) this is a no-op.
-    """
-    try:
-        from routes.socket_events import (
-            broadcast_new_alert, broadcast_alert_updated,
-            broadcast_new_event, broadcast_stats, broadcast_timeline,
-        )
-        fns = {
-            "new_alert":       broadcast_new_alert,
-            "alert_updated":   broadcast_alert_updated,
-            "new_event":       broadcast_new_event,
-            "stats":           broadcast_stats,
-            "timeline":        broadcast_timeline,
-        }
-        if fn_name in fns:
-            fns[fn_name](*args, **kwargs)
-    except Exception as exc:
-        logger.warning(f"Broadcast '{fn_name}' failed: {exc}")
-
-
-# ── Stats helper ─────────────────────────────────────────────────────────────
-
-def _stats_payload() -> dict:
-    total_events = Event.query.count()
-    total_alerts = Alert.query.count()
-    new_alerts   = Alert.query.filter_by(status="NEW").count()
-
-    rows = (
-        db.session.query(Alert.severity, func.count(Alert.id))
-        .group_by(Alert.severity).all()
-    )
-    sev = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
-    for s, c in rows:
-        sev[s] = c
+def _serialize_event(event):
+    if not event:
+        return None
 
     return {
-        "total_events":          total_events,
-        "total_alerts":          total_alerts,
-        "new_alerts":            new_alerts,
-        "severity_distribution": sev,
+        'id': event.id,
+        'event_id': event.event_id,
+        'computer_name': event.computer_name,
+        'user': event.user,
+        'event_type': event.event_type,
+        'timestamp': event.timestamp.isoformat() if event.timestamp else None,
+        'description': event.description,
+        'details': event.details,
+        'created_at': event.created_at.isoformat() if event.created_at else None,
     }
 
 
-def _timeline_payload() -> dict:
-    now    = datetime.now(timezone.utc).replace(tzinfo=None)
-    BUCKET = 30
-    NUM    = 6
-    buckets = []
-
-    for i in range(NUM - 1, -1, -1):
-        start = now - timedelta(minutes=(i + 1) * BUCKET)
-        end   = now - timedelta(minutes=i * BUCKET)
-        count = Event.query.filter(
-            Event.timestamp >= start,
-            Event.timestamp <  end,
-        ).count()
-        buckets.append((start.strftime("%H:%M"), count))
-
-    if all(b[1] == 0 for b in buckets):
-        oldest = db.session.query(func.min(Event.timestamp)).scalar()
-        newest = db.session.query(func.max(Event.timestamp)).scalar()
-        if oldest and newest and oldest != newest:
-            span   = (newest - oldest).total_seconds()
-            bsecs  = span / NUM
-            buckets = []
-            for i in range(NUM):
-                s = oldest + timedelta(seconds=i * bsecs)
-                e = oldest + timedelta(seconds=(i + 1) * bsecs)
-                c = Event.query.filter(
-                    Event.timestamp >= s, Event.timestamp < e
-                ).count()
-                buckets.append((s.strftime("%H:%M"), c))
+def _serialize_alert(alert):
+    event = alert.event
 
     return {
-        "labels": [b[0] for b in buckets],
-        "values": [b[1] for b in buckets],
+        'id': alert.id,
+        'title': alert.title,
+        'description': alert.description,
+        'severity': alert.severity,
+        'status': alert.status,
+        'assigned_to': alert.assigned_to,
+        'notes': alert.notes,
+        'created_at': alert.created_at.isoformat() if alert.created_at else None,
+        'updated_at': alert.updated_at.isoformat() if alert.updated_at else None,
+        'event_id': alert.event_id,
+        'rule_id': alert.rule_id,
+        'rule_name': alert.rule.name if alert.rule else None,
+        'event_type': event.event_type if event else None,
+        'computer_name': event.computer_name if event else None,
+        'user': event.user if event else None,
+        'event_description': event.description if event else None,
+        'event_details': event.details if event else None,
+        'event': _serialize_event(event),
     }
 
+# ==================== EVENTS ====================
 
-# ── EVENTS ───────────────────────────────────────────────────────────────────
-
-@api_bp.route("/events", methods=["GET"])
+@api_bp.route('/events', methods=['GET'])
 def get_events():
-    page     = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 100)
-    ev = (
-        Event.query
-        .order_by(Event.timestamp.desc())
-        .paginate(page=page, per_page=per_page, error_out=False)
-    )
+    """Get all events with pagination"""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    events = Event.query.order_by(Event.timestamp.desc()).paginate(page=page, per_page=per_page)
+    
     return jsonify({
-        "total": ev.total, "pages": ev.pages,
-        "current_page": page, "per_page": per_page,
-        "events": [{
-            "id": e.id, "event_id": e.event_id,
-            "computer_name": e.computer_name, "user": e.user,
-            "event_type": e.event_type,
-            "timestamp": e.timestamp.isoformat(),
-            "description": e.description,
-        } for e in ev.items],
+        'total': events.total,
+        'pages': events.pages,
+        'current_page': page,
+        'events': [{
+            'id': e.id,
+            'event_id': e.event_id,
+            'computer_name': e.computer_name,
+            'user': e.user,
+            'event_type': e.event_type,
+            'timestamp': e.timestamp.isoformat(),
+            'description': e.description,
+        } for e in events.items]
     })
 
-
-@api_bp.route("/events/<int:event_id>", methods=["GET"])
+@api_bp.route('/events/<int:event_id>', methods=['GET'])
 def get_event(event_id):
-    e = db.get_or_404(Event, event_id)
+    """Get specific event details"""
+    event = Event.query.get_or_404(event_id)
+    
     return jsonify({
-        "id": e.id, "event_id": e.event_id,
-        "computer_name": e.computer_name, "user": e.user,
-        "event_type": e.event_type, "timestamp": e.timestamp.isoformat(),
-        "description": e.description, "details": e.details,
-        "created_at": e.created_at.isoformat(),
+        'id': event.id,
+        'event_id': event.event_id,
+        'computer_name': event.computer_name,
+        'user': event.user,
+        'event_type': event.event_type,
+        'timestamp': event.timestamp.isoformat(),
+        'description': event.description,
+        'details': event.details,
+        'created_at': event.created_at.isoformat(),
     })
 
-
-@api_bp.route("/events", methods=["POST"])
+@api_bp.route('/events', methods=['POST'])
 def create_event():
-    data, err = validate_body(CreateEventSchema, request.get_json(silent=True))
-    if err:
-        return jsonify({"error": "Validation failed", "details": err}), 422
-
+    """Create a new event"""
+    data = request.get_json()
+    
     try:
-        event = Event(**data)
+        event = Event(
+            event_id=data.get('event_id'),
+            computer_name=data.get('computer_name'),
+            user=data.get('user'),
+            event_type=data.get('event_type'),
+            description=data.get('description'),
+            details=data.get('details', {})
+        )
+        
         db.session.add(event)
         db.session.commit()
 
-        # ── broadcast raw event ───────────────────────────────
-        _broadcast("new_event", {
-            "id":            event.id,
-            "event_type":    event.event_type,
-            "computer_name": event.computer_name,
-            "user":          event.user,
-            "description":   (event.description or "")[:120],
-            "timestamp":     event.timestamp.isoformat(),
-        })
+        # Broadcast the raw event to all connected clients
+        try:
+            from routes.socket_events import broadcast_new_event, broadcast_stats, broadcast_timeline
+            broadcast_new_event({
+                "id":            event.id,
+                "event_type":    event.event_type,
+                "computer_name": event.computer_name,
+                "user":          event.user,
+                "description":   (event.description or "")[:120],
+                "timestamp":     event.timestamp.isoformat(),
+            })
+        except Exception as sock_err:
+            logger.warning(f"Socket broadcast failed: {sock_err}")
+        
+        # Check against rules (may create alerts)
+        check_event_against_rules(event)
 
-        new_alerts = _check_event_against_rules(event)
-        logger.info(f"Event {event.id} created — {len(new_alerts)} alert(s)")
-
-        # ── push refreshed stats + timeline ──────────────────
-        _broadcast("stats",    _stats_payload())
-        _broadcast("timeline", _timeline_payload())
-
-        return jsonify({
-            "id": event.id, "status": "created",
-            "alerts_fired": len(new_alerts),
-        }), 201
-
-    except Exception as exc:
+        # Push refreshed stats and timeline
+        try:
+            from routes.socket_events import broadcast_stats, broadcast_timeline
+            broadcast_stats(_stats_payload())
+            broadcast_timeline(_timeline_payload())
+        except Exception as sock_err:
+            logger.warning(f"Stats/timeline broadcast failed: {sock_err}")
+        
+        return jsonify({'id': event.id, 'status': 'created'}), 201
+    except Exception as e:
         db.session.rollback()
-        logger.exception("Error creating event")
-        return jsonify({"error": str(exc)}), 400
+        logger.error(f"Error creating event: {e}")
+        return jsonify({'error': str(e)}), 400
 
+# ==================== ALERTS ====================
 
-# ── ALERTS ───────────────────────────────────────────────────────────────────
-
-@api_bp.route("/alerts", methods=["GET"])
+@api_bp.route('/alerts', methods=['GET'])
 def get_alerts():
-    page     = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 100)
-    status   = request.args.get("status")
-    severity = request.args.get("severity")
-    search   = request.args.get("search", "").strip()
+    """Get all alerts with filtering"""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    status = request.args.get('status')
+    severity = request.args.get('severity')
+    search = request.args.get('search', '').strip()
+    
+    query = Alert.query.options(joinedload(Alert.event), joinedload(Alert.rule))
+    
+    if status:
+        query = query.filter_by(status=status)
+    if search:
+        search_term = f"%{search.lower()}%"
+        query = query.outerjoin(Alert.event).outerjoin(Alert.rule).filter(
+            db.or_(
+                db.func.lower(Alert.title).like(search_term),
+                db.func.lower(Alert.description).like(search_term),
+                db.func.lower(Alert.notes).like(search_term),
+                db.func.lower(Alert.assigned_to).like(search_term),
+                db.func.lower(Event.computer_name).like(search_term),
+                db.func.lower(Event.user).like(search_term),
+                db.func.lower(Event.event_type).like(search_term),
+                db.func.lower(Event.description).like(search_term),
+                db.func.lower(Rule.name).like(search_term),
+            )
+        ).distinct()
 
-    q = Alert.query
-    if status:   q = q.filter_by(status=status)
-    if severity: q = q.filter_by(severity=severity)
-    if search:   q = q.filter(Alert.title.ilike(f"%{search}%"))
+    severity_counts = {
+        'LOW': 0,
+        'MEDIUM': 0,
+        'HIGH': 0,
+        'CRITICAL': 0,
+    }
 
-    alerts = q.order_by(Alert.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
+    for sev, count in query.with_entities(Alert.severity, db.func.count(Alert.id)).group_by(Alert.severity).all():
+        severity_counts[sev] = count
+
+    if severity:
+        query = query.filter_by(severity=severity)
+    
+    alerts = query.order_by(Alert.created_at.desc()).paginate(page=page, per_page=per_page)
+    
     return jsonify({
-        "total": alerts.total, "pages": alerts.pages,
-        "current_page": page, "per_page": per_page,
-        "alerts": [{
-            "id": a.id, "title": a.title,
-            "severity": a.severity, "status": a.status,
-            "created_at": a.created_at.isoformat(),
-        } for a in alerts.items],
+        'total': alerts.total,
+        'severity_counts': severity_counts,
+        'alerts': [_serialize_alert(a) for a in alerts.items]
     })
 
-
-@api_bp.route("/alerts/<int:alert_id>", methods=["GET"])
+@api_bp.route('/alerts/<int:alert_id>', methods=['GET'])
 def get_alert(alert_id):
-    a = db.get_or_404(Alert, alert_id)
-    return jsonify({
-        "id": a.id, "title": a.title, "description": a.description,
-        "severity": a.severity, "status": a.status,
-        "assigned_to": a.assigned_to, "notes": a.notes,
-        "created_at": a.created_at.isoformat(),
-        "updated_at": a.updated_at.isoformat(),
-    })
+    """Get alert details"""
+    alert = Alert.query.options(joinedload(Alert.event), joinedload(Alert.rule)).get_or_404(alert_id)
 
+    return jsonify(_serialize_alert(alert))
 
-@api_bp.route("/alerts/<int:alert_id>", methods=["PUT"])
+@api_bp.route('/alerts/<int:alert_id>', methods=['PUT'])
 def update_alert(alert_id):
-    alert = db.get_or_404(Alert, alert_id)
-    data, err = validate_body(UpdateAlertSchema, request.get_json(silent=True))
-    if err:
-        return jsonify({"error": "Validation failed", "details": err}), 422
-
-    for field, val in data.items():
-        setattr(alert, field, val)
+    """Update alert status or notes"""
+    alert = Alert.query.get_or_404(alert_id)
+    data = request.get_json()
+    
+    if 'status' in data:
+        alert.status = data['status']
+    if 'notes' in data:
+        alert.notes = data['notes']
+    if 'assigned_to' in data:
+        alert.assigned_to = data['assigned_to']
+    
     db.session.commit()
-    logger.info(f"Alert {alert_id} updated: {data}")
+    return jsonify({'id': alert.id, 'status': 'updated'})
 
-    _broadcast("alert_updated", {
-        "id": alert.id, "title": alert.title,
-        "severity": alert.severity, "status": alert.status,
-    })
-    _broadcast("stats", _stats_payload())
+# ==================== RULES ====================
 
-    return jsonify({"id": alert.id, "status": "updated"})
-
-
-# ── RULES ─────────────────────────────────────────────────────────────────────
-
-@api_bp.route("/rules", methods=["GET"])
+@api_bp.route('/rules', methods=['GET'])
 def get_rules():
-    page         = request.args.get("page", 1, type=int)
-    per_page     = min(request.args.get("per_page", 20, type=int), 100)
-    enabled_only = request.args.get("enabled_only", "false").lower() == "true"
-
-    q = Rule.query
+    """Get all detection rules"""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    enabled_only = request.args.get('enabled_only', False, type=bool)
+    
+    query = Rule.query
     if enabled_only:
-        q = q.filter_by(enabled=True)
-    rules = q.paginate(page=page, per_page=per_page, error_out=False)
-
+        query = query.filter_by(enabled=True)
+    
+    rules = query.paginate(page=page, per_page=per_page)
+    
     return jsonify({
-        "total": rules.total,
-        "rules": [{
-            "id": r.id, "name": r.name,
-            "severity": r.severity, "enabled": r.enabled, "tags": r.tags,
-        } for r in rules.items],
+        'total': rules.total,
+        'rules': [{
+            'id': r.id,
+            'name': r.name,
+            'severity': r.severity,
+            'enabled': r.enabled,
+            'tags': r.tags,
+        } for r in rules.items]
     })
 
-
-@api_bp.route("/rules", methods=["POST"])
+@api_bp.route('/rules', methods=['POST'])
 def create_rule():
-    data, err = validate_body(CreateRuleSchema, request.get_json(silent=True))
-    if err:
-        return jsonify({"error": "Validation failed", "details": err}), 422
+    """Create a new detection rule"""
+    data = request.get_json()
+    
     try:
-        rule = Rule(**data)
+        rule = Rule(
+            name=data.get('name'),
+            description=data.get('description'),
+            event_type=data.get('event_type'),
+            conditions=data.get('conditions', []),
+            severity=data.get('severity', 'MEDIUM'),
+            tags=data.get('tags', []),
+            enabled=data.get('enabled', True)
+        )
+        
         db.session.add(rule)
         db.session.commit()
-        return jsonify({"id": rule.id, "status": "created"}), 201
-    except Exception as exc:
+        
+        return jsonify({'id': rule.id, 'status': 'created'}), 201
+    except Exception as e:
         db.session.rollback()
-        return jsonify({"error": str(exc)}), 400
+        logger.error(f"Error creating rule: {e}")
+        return jsonify({'error': str(e)}), 400
 
-
-@api_bp.route("/rules/<int:rule_id>", methods=["PUT"])
+@api_bp.route('/rules/<int:rule_id>', methods=['PUT'])
 def update_rule(rule_id):
-    rule = db.get_or_404(Rule, rule_id)
-    data, err = validate_body(UpdateRuleSchema, request.get_json(silent=True))
-    if err:
-        return jsonify({"error": "Validation failed", "details": err}), 422
-    for field, val in data.items():
-        setattr(rule, field, val)
+    """Update a detection rule"""
+    rule = Rule.query.get_or_404(rule_id)
+    data = request.get_json()
+    
+    if 'name' in data:
+        rule.name = data['name']
+    if 'description' in data:
+        rule.description = data['description']
+    if 'conditions' in data:
+        rule.conditions = data['conditions']
+    if 'severity' in data:
+        rule.severity = data['severity']
+    if 'tags' in data:
+        rule.tags = data['tags']
+    if 'enabled' in data:
+        rule.enabled = data['enabled']
+    
     db.session.commit()
-    return jsonify({"id": rule.id, "status": "updated"})
+    return jsonify({'id': rule.id, 'status': 'updated'})
 
-
-@api_bp.route("/rules/<int:rule_id>", methods=["DELETE"])
+@api_bp.route('/rules/<int:rule_id>', methods=['DELETE'])
 def delete_rule(rule_id):
-    rule = db.get_or_404(Rule, rule_id)
+    """Delete a rule"""
+    rule = Rule.query.get_or_404(rule_id)
     db.session.delete(rule)
     db.session.commit()
-    return jsonify({"status": "deleted"})
+    return jsonify({'status': 'deleted'})
 
 
-# ── STATISTICS ────────────────────────────────────────────────────────────────
+# ==================== STATISTICS ====================
 
-@api_bp.route("/stats", methods=["GET"])
+@api_bp.route('/stats', methods=['GET'])
 def get_statistics():
-    return jsonify(_stats_payload())
+
+    from sqlalchemy import func
+
+    total_events = Event.query.count()
+    total_alerts = Alert.query.count()
+
+    severity_counts = db.session.query(
+        Alert.severity,
+        func.count(Alert.id)
+    ).group_by(Alert.severity).all()
+
+    severity_distribution = {
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+    }
+
+    for sev, count in severity_counts:
+        severity_distribution[sev] = count
+
+    return jsonify({
+        "total_events": total_events,
+        "total_alerts": total_alerts,
+        "severity_distribution": severity_distribution
+    })
 
 
-# ── MITRE ATT&CK ─────────────────────────────────────────────────────────────
+def _stats_payload():
+    """Build the live stats payload used by Socket.IO broadcast and ingestion."""
+    from sqlalchemy import func
+
+    total_events = Event.query.count()
+    total_alerts = Alert.query.count()
+
+    severity_counts = db.session.query(
+        Alert.severity,
+        func.count(Alert.id)
+    ).group_by(Alert.severity).all()
+
+    severity_distribution = {
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0,
+    }
+
+    for sev, count in severity_counts:
+        severity_distribution[sev] = count
+
+    return {
+        "total_events": total_events,
+        "total_alerts": total_alerts,
+        "severity_distribution": severity_distribution,
+    }
+
+
+def _timeline_payload():
+    """Build the live timeline payload used by Socket.IO broadcast and ingestion."""
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    buckets = []
+
+    for i in range(5, -1, -1):
+        bucket_start = now - timedelta(minutes=(i + 1) * 10)
+        bucket_end = now - timedelta(minutes=i * 10)
+
+        count = Event.query.filter(
+            Event.timestamp >= bucket_start,
+            Event.timestamp < bucket_end,
+        ).count()
+
+        label = bucket_start.strftime("%H:%M")
+        buckets.append((label, count))
+
+    return {
+        "labels": [bucket[0] for bucket in buckets],
+        "values": [bucket[1] for bucket in buckets],
+    }
+# ==================== HELPER FUNCTIONS ====================
+
+def check_event_against_rules(event):
+    """Check if event matches any enabled rules and create alerts"""
+    rules = Rule.query.filter_by(enabled=True).all()
+    
+    event_data = {
+        'event_type': event.event_type,
+        'computer_name': event.computer_name,
+        'user': event.user,
+        'description': event.description,
+        'details': event.details or {}
+    }
+    
+    new_alerts = []
+    for rule in rules:
+        matched, message = rule_engine.match_rule(event_data, {
+            'event_type': rule.event_type,
+            'conditions': rule.conditions,
+            'enabled': rule.enabled,
+        })
+        
+        if matched:
+            alert = Alert(
+                event_id=event.id,
+                rule_id=rule.id,
+                severity=rule.severity,
+                title=rule.name,
+                description=message,
+                status='NEW'
+            )
+            db.session.add(alert)
+            new_alerts.append(alert)
+    
+    db.session.commit()
+
+    # Broadcast each new alert via WebSocket
+    if new_alerts:
+        try:
+            from routes.socket_events import broadcast_new_alert
+            for alert in new_alerts:
+                broadcast_new_alert({
+                    "id":         alert.id,
+                    "title":      alert.title,
+                    "severity":   alert.severity,
+                    "status":     alert.status,
+                    "created_at": alert.created_at.isoformat(),
+                })
+        except Exception as sock_err:
+            logger.warning(f"Alert broadcast failed: {sock_err}")
+# ==================== MITRE ATT&CK ====================
 
 MITRE_MAP = {
     "T1059": "Command & Scripting Interpreter",
@@ -313,16 +446,19 @@ MITRE_MAP = {
     "T1566": "Phishing",
 }
 
-
-@api_bp.route("/mitre", methods=["GET"])
+@api_bp.route('/mitre', methods=['GET'])
 def get_mitre():
+    """Return MITRE techniques derived from tags on enabled rules."""
     rules = Rule.query.filter_by(enabled=True).all()
-    seen: dict[str, str] = {}
+
+    seen = {}
     for rule in rules:
         for tag in (rule.tags or []):
-            t = tag.upper()
-            if t.startswith("T") and t in MITRE_MAP and t not in seen:
-                seen[t] = MITRE_MAP[t]
+            tag = tag.upper()
+            if tag.startswith("T") and tag in MITRE_MAP and tag not in seen:
+                seen[tag] = MITRE_MAP[tag]
+
+    # Fall back to defaults if DB has no tagged rules yet
     if not seen:
         seen = {
             "T1059": "Command & Scripting Interpreter",
@@ -331,52 +467,36 @@ def get_mitre():
             "T1071": "Application Layer Protocol",
             "T1112": "Modify Registry",
         }
-    return jsonify({"techniques": [{"id": k, "name": v} for k, v in seen.items()]})
+
+    return jsonify({
+        "techniques": [{"id": k, "name": v} for k, v in seen.items()]
+    })
 
 
-# ── TIMELINE ──────────────────────────────────────────────────────────────────
 
-@api_bp.route("/events_timeline", methods=["GET"])
+
+# ==================== EVENTS TIMELINE ====================
+
+@api_bp.route('/events_timeline', methods=['GET'])
 def get_events_timeline():
-    return jsonify(_timeline_payload())
+    """Return event counts grouped into 10-minute buckets for the last hour."""
+    from sqlalchemy import func, text
+    from datetime import datetime, timedelta
 
+    now = datetime.utcnow()
+    buckets = []
 
-# ── RULE MATCHING ─────────────────────────────────────────────────────────────
+    for i in range(5, -1, -1):
+        bucket_start = now - timedelta(minutes=(i + 1) * 10)
+        bucket_end   = now - timedelta(minutes=i * 10)
+        count = Event.query.filter(
+            Event.timestamp >= bucket_start,
+            Event.timestamp <  bucket_end
+        ).count()
+        label = bucket_start.strftime("%H:%M")
+        buckets.append((label, count))
 
-def _check_event_against_rules(event: Event) -> list[Alert]:
-    rules = Rule.query.filter_by(enabled=True).all()
-    event_data = {
-        "event_type":    event.event_type,
-        "computer_name": event.computer_name,
-        "user":          event.user,
-        "description":   event.description,
-        "details":       event.details or {},
-    }
-    created: list[Alert] = []
-    for rule in rules:
-        matched, message = rule_engine.match_rule(event_data, {
-            "event_type": rule.event_type,
-            "conditions": rule.conditions,
-            "enabled":    rule.enabled,
-        })
-        if matched:
-            alert = Alert(
-                event_id=event.id, rule_id=rule.id,
-                severity=rule.severity, title=rule.name,
-                description=message, status="NEW",
-            )
-            db.session.add(alert)
-            created.append(alert)
-
-    db.session.commit()
-
-    for alert in created:
-        _broadcast("new_alert", {
-            "id":         alert.id,
-            "title":      alert.title,
-            "severity":   alert.severity,
-            "status":     alert.status,
-            "created_at": alert.created_at.isoformat(),
-        })
-
-    return created
+    return jsonify({
+        "labels": [b[0] for b in buckets],
+        "values": [b[1] for b in buckets],
+    })

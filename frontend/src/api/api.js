@@ -17,6 +17,27 @@ export const getTimeline = () =>
 export const getMitre = () =>
   fetch("/api/mitre").then(handle);
 
+export const getEvents = ({ page = 1, perPage = 100 } = {}) => {
+  const params = new URLSearchParams({ page, per_page: perPage });
+  return fetch(`/api/events?${params}`).then(handle);
+};
+
+export const getEvent = (id) =>
+  fetch(`/api/events/${id}`).then(handle);
+
+export const getAlert = (id) =>
+  fetch(`/api/alerts/${id}`).then(handle);
+
+export const getRules = ({ page = 1, perPage = 100, enabledOnly = false } = {}) => {
+  const params = new URLSearchParams({ page, per_page: perPage });
+
+  if (enabledOnly) {
+    params.set("enabled_only", "true");
+  }
+
+  return fetch(`/api/rules?${params}`).then(handle);
+};
+
 export const getAlerts = ({ page = 1, perPage = 10, status = "", severity = "", search = "" } = {}) => {
   const params = new URLSearchParams({ page, per_page: perPage });
   if (status)   params.set("status", status);

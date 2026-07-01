@@ -59,10 +59,16 @@ def broadcast_alert_updated(alert_data: dict) -> None:
     """Push an alert status change to every connected dashboard client."""
     socketio.emit("alert_updated", alert_data, room=SOC_ROOM)
 
-
 def broadcast_new_event(event_data: dict) -> None:
-    """Push a new raw event to every connected dashboard client."""
-    socketio.emit("new_event", event_data, room=SOC_ROOM)
+    print("\n========== SOCKET EMIT ==========")
+    print(event_data)
+    print("=================================\n")
+
+    socketio.emit(
+        "new_event",
+        event_data,
+        room=SOC_ROOM
+    )
 
 
 def broadcast_stats(stats_data: dict) -> None:

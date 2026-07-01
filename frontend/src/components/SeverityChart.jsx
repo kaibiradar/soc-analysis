@@ -51,37 +51,56 @@ function SeverityChart({ liveStats }) {
   const [chartData, setChartData] = useState({ labels: [], datasets: [] });
   const [error, setError]         = useState(null);
 
-  const buildChart = (sev) => {
-    const labels = Object.keys(sev);
-    setChartData({
-      labels,
-      datasets: [{
-        label: "Alerts",
-        data: Object.values(sev),
-        backgroundColor: labels.map((l) => SEV_COLORS[l] ?? "#00d2ff"),
-        borderRadius: 5,
-        borderSkipped: false,
-        barThickness: 36,
-      }],
-    });
-  };
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      getStats()
+        .then((data) => {
+          const severityDistribution = data.severity_distribution || {};
+          const labels = Object.keys(severityDistribution);
 
-  const fetchData = async () => {
-    try {
-      const data = await getStats();
-      buildChart(data.severity_distribution || {});
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+          setChartData({
+            labels,
+            datasets: [{
+              label: "Alerts",
+              data: Object.values(severityDistribution),
+              backgroundColor: labels.map((label) => SEV_COLORS[label] ?? "#00d2ff"),
+              borderRadius: 5,
+              borderSkipped: false,
+              barThickness: 36,
+            }],
+          });
 
-  useEffect(() => { fetchData(); }, []);
+          setError(null);
+        })
+        .catch((err) => {
+          setError(err.message);
+        });
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   // Accept live push
   useEffect(() => {
     if (liveStats?.severity_distribution) {
-      buildChart(liveStats.severity_distribution);
+      const timeoutId = window.setTimeout(() => {
+        const severityDistribution = liveStats.severity_distribution;
+        const labels = Object.keys(severityDistribution);
+
+        setChartData({
+          labels,
+          datasets: [{
+            label: "Alerts",
+            data: Object.values(severityDistribution),
+            backgroundColor: labels.map((label) => SEV_COLORS[label] ?? "#00d2ff"),
+            borderRadius: 5,
+            borderSkipped: false,
+            barThickness: 36,
+          }],
+        });
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
   }, [liveStats]);
 

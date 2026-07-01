@@ -51,7 +51,7 @@ export function useSocket(onEvent) {
     return () => {
       socket.disconnect();
     };
-  }, []);                // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return { connected, socket: socketRef };
 }
