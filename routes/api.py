@@ -116,19 +116,33 @@ def get_events():
 
 @api_bp.route('/events/<int:event_id>', methods=['GET'])
 def get_event(event_id):
-    """Get specific event details"""
+    """Get specific event details including related alerts."""
     event = Event.query.get_or_404(event_id)
-    
+
+    # Related alerts for this event
+    related_alerts = Alert.query.options(
+        joinedload(Alert.rule)
+    ).filter_by(event_id=event_id).order_by(Alert.created_at.desc()).all()
+
     return jsonify({
-        'id': event.id,
-        'event_id': event.event_id,
+        'id':            event.id,
+        'event_id':      event.event_id,
         'computer_name': event.computer_name,
-        'user': event.user,
-        'event_type': event.event_type,
-        'timestamp': event.timestamp.isoformat(),
-        'description': event.description,
-        'details': event.details,
-        'created_at': event.created_at.isoformat(),
+        'user':          event.user,
+        'event_type':    event.event_type,
+        'timestamp':     event.timestamp.isoformat(),
+        'description':   event.description,
+        'details':       event.details,
+        'created_at':    event.created_at.isoformat(),
+        'alerts': [{
+            'id':          a.id,
+            'title':       a.title,
+            'severity':    a.severity,
+            'status':      a.status,
+            'rule_name':   a.rule.name if a.rule else None,
+            'rule_tags':   a.rule.tags if a.rule else [],
+            'created_at':  a.created_at.isoformat(),
+        } for a in related_alerts],
     })
 
 @api_bp.route('/events', methods=['POST'])

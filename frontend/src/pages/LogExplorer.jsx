@@ -1,23 +1,12 @@
 /**
- * LogExplorer — enterprise-grade event investigation view.
- *
- * Layout:
- *   ┌─ Toolbar ────────────────────────────────────────────┐
- *   │  [search box]  [event type] [host] [user]  [sort ↕]  │
- *   │  [Clear]                              [CSV] [JSON] [⭐ Save] │
- *   └──────────────────────────────────────────────────────┘
- *   ┌─ Results table (sticky header, sortable columns) ───┐
- *   │  Time · Event ID · Type · Host · User · Description  │
- *   └──────────────────────────────────────────────────────┘
- *   ┌─ Saved ─┐  ┌─ Recent ──────────────────────────────┐
- *   └─────────┘  └───────────────────────────────────────┘
- *
- * All data comes from the real /api/events endpoint.
- * Saved searches and history are persisted in localStorage only.
+ * LogExplorer — enterprise event search and investigation.
+ * Clicking a row opens EventInvestigationDrawer for full incident analysis.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getEvents } from "../api/api";
+import EventInvestigationDrawer from "../components/EventInvestigationDrawer";
 
+/* ── Constants ── */
 const PER_PAGE    = 25;
 const LS_SAVED    = "soc_saved_searches";
 const LS_HISTORY  = "soc_search_history";
@@ -30,16 +19,10 @@ const EVENT_TYPES = [
 ];
 
 const EVENT_TYPE_COLORS = {
-  ProcessCreate:        "#00d2ff",
-  NetworkConnect:       "#a78bfa",
-  RegistryEvent:        "#fbbf24",
-  FileCreate:           "#22d3a0",
-  CreateRemoteThread:   "#f43f5e",
-  ProcessAccess:        "#fb923c",
-  DriverLoaded:         "#e879f9",
-  ImageLoaded:          "#818cf8",
-  ProcessTerminated:    "#64748b",
-  RawAccessRead:        "#f97316",
+  ProcessCreate: "#00d2ff", NetworkConnect: "#a78bfa", RegistryEvent: "#fbbf24",
+  FileCreate: "#22d3a0", CreateRemoteThread: "#f43f5e", ProcessAccess: "#fb923c",
+  DriverLoaded: "#e879f9", ImageLoaded: "#818cf8", ProcessTerminated: "#64748b",
+  RawAccessRead: "#f97316",
 };
 const etColor = (t) => EVENT_TYPE_COLORS[t] ?? "#7a9bbf";
 
@@ -56,6 +39,7 @@ function highlight(text = "", query = "") {
     </>
   );
 }
+
 function fmtTs(ts) {
   if (!ts) return "—";
   return new Date(ts).toLocaleString(undefined, {
@@ -64,33 +48,40 @@ function fmtTs(ts) {
     hour12: false,
   });
 }
+
 function loadLS(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
+
 function saveLS(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* quota */ }
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* quota exceeded */ }
 }
 
 /* ── Icons ── */
 const SearchIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
     strokeLinecap="round" strokeLinejoin="round" style={{ width: 15, height: 15 }}>
-    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
   </svg>
 );
+
 const DownloadIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
     strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13 }}>
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-    <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" y1="15" x2="12" y2="3" />
   </svg>
 );
+
 const StarIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
     strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13 }}>
     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
   </svg>
 );
+
 const ChevronIcon = ({ open }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
     strokeLinecap="round" strokeLinejoin="round"
@@ -98,16 +89,19 @@ const ChevronIcon = ({ open }) => (
     <polyline points="6 9 12 15 18 9" />
   </svg>
 );
+
 const SortIcon = ({ active, dir }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke={active ? "#00d2ff" : "currentColor"} strokeWidth="2"
-    strokeLinecap="round" strokeLinejoin="round" style={{ width: 11, height: 11, marginLeft: 4, opacity: active ? 1 : 0.3 }}>
+  <svg viewBox="0 0 24 24" fill="none"
+    stroke={active ? "#00d2ff" : "currentColor"} strokeWidth="2"
+    strokeLinecap="round" strokeLinejoin="round"
+    style={{ width: 11, height: 11, marginLeft: 4, opacity: active ? 1 : 0.3 }}>
     {dir === "asc"
       ? <><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>
-      : <><line x1="12" y1="5"  x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>}
+      : <><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>}
   </svg>
 );
 
-/* ── Collapsible panel ── */
+/* ── Collapsible ── */
 function Collapsible({ title, count, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -126,17 +120,16 @@ function Collapsible({ title, count, children, defaultOpen = true }) {
 function LogExplorer() {
   const EMPTY_FILTERS = { q: "", event_type: "", hostname: "", username: "" };
 
-  const [filters,   setFilters]   = useState(EMPTY_FILTERS);
-  const [page,      setPage]      = useState(1);
-  const [sort,      setSort]      = useState("timestamp");
-  const [direction, setDirection] = useState("desc");
-  const [data,      setData]      = useState({ events: [], total: 0, pages: 0 });
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState("");
-  const [expanded,  setExpanded]  = useState(null);   // expanded row id
-
-  const [saved,   setSaved]   = useState(() => loadLS(LS_SAVED,   []));
-  const [history, setHistory] = useState(() => loadLS(LS_HISTORY, []));
+  const [filters,       setFilters]       = useState(EMPTY_FILTERS);
+  const [page,          setPage]          = useState(1);
+  const [sort,          setSort]          = useState("timestamp");
+  const [direction,     setDirection]     = useState("desc");
+  const [data,          setData]          = useState({ events: [], total: 0, pages: 0 });
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState("");
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [saved,         setSaved]         = useState(() => loadLS(LS_SAVED,   []));
+  const [history,       setHistory]       = useState(() => loadLS(LS_HISTORY, []));
 
   const abortRef = useRef(null);
 
@@ -145,10 +138,8 @@ function LogExplorer() {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-
     setLoading(true);
     setError("");
-
     try {
       const d = await getEvents({
         page, perPage: PER_PAGE, sort, direction,
@@ -167,16 +158,16 @@ function LogExplorer() {
 
   useEffect(() => { load(); }, [load]);
 
-  /* ── Record history entry ── */
+  /* ── Record history ── */
   useEffect(() => {
     if (!data.total) return;
     const entry = {
-      id:       Date.now(),
-      query:    filters.q || "(filtered)",
-      filters:  { ...filters },
+      id: Date.now(),
+      query: filters.q || "(filtered)",
+      filters: { ...filters },
       sort, direction,
-      results:  data.total,
-      ts:       new Date().toISOString(),
+      results: data.total,
+      ts: new Date().toISOString(),
     };
     setHistory((prev) => {
       const next = [entry, ...prev.filter((h) => h.query !== entry.query)].slice(0, MAX_HISTORY);
@@ -185,10 +176,10 @@ function LogExplorer() {
     });
   }, [data.total]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Column sort toggle ── */
+  /* ── Sort toggle ── */
   const handleSort = (col) => {
     if (sort === col) {
-      setDirection((d) => d === "desc" ? "asc" : "desc");
+      setDirection((d) => (d === "desc" ? "asc" : "desc"));
     } else {
       setSort(col);
       setDirection("desc");
@@ -197,14 +188,11 @@ function LogExplorer() {
   };
 
   /* ── Filter helpers ── */
-  const setFilter = (key, val) => {
-    setFilters((f) => ({ ...f, [key]: val }));
-    setPage(1);
-  };
+  const setFilter = (key, val) => { setFilters((f) => ({ ...f, [key]: val })); setPage(1); };
   const clearFilters = () => { setFilters(EMPTY_FILTERS); setPage(1); };
   const hasFilters = Object.values(filters).some(Boolean);
 
-  /* ── Save / load search ── */
+  /* ── Saved searches ── */
   const saveSearch = () => {
     const name = window.prompt("Name this search:");
     if (!name?.trim()) return;
@@ -215,192 +203,200 @@ function LogExplorer() {
       return next;
     });
   };
-  const loadSaved = (s) => { setFilters({ ...EMPTY_FILTERS, ...s.filters }); setSort(s.sort || "timestamp"); setDirection(s.direction || "desc"); setPage(1); };
+  const loadSaved = (s) => {
+    setFilters({ ...EMPTY_FILTERS, ...s.filters });
+    setSort(s.sort || "timestamp");
+    setDirection(s.direction || "desc");
+    setPage(1);
+  };
   const deleteSaved = (id, e) => {
     e.stopPropagation();
     setSaved((prev) => { const n = prev.filter((s) => s.id !== id); saveLS(LS_SAVED, n); return n; });
   };
-  const loadHistory = (h) => { setFilters({ ...EMPTY_FILTERS, ...h.filters }); setSort(h.sort || "timestamp"); setDirection(h.direction || "desc"); setPage(1); };
+  const loadHistory = (h) => {
+    setFilters({ ...EMPTY_FILTERS, ...h.filters });
+    setSort(h.sort || "timestamp");
+    setDirection(h.direction || "desc");
+    setPage(1);
+  };
   const clearHistory = () => { setHistory([]); saveLS(LS_HISTORY, []); };
 
   /* ── Export ── */
   const exportData = (fmt) => {
-    const params = new URLSearchParams({ page: 1, per_page: 10000, sort, direction });
-    if (filters.q)          params.set("q",          filters.q);
-    if (filters.event_type) params.set("event_type", filters.event_type);
-    if (filters.hostname)   params.set("hostname",   filters.hostname);
-    if (filters.username)   params.set("username",   filters.username);
-
     if (fmt === "csv") {
-      // Build CSV client-side from current page
       const cols = ["id", "timestamp", "event_type", "computer_name", "user", "description"];
-      const rows = [cols.join(","), ...data.events.map((e) =>
-        cols.map((c) => `"${(e[c] ?? "").toString().replace(/"/g, '""')}"`).join(",")
-      )];
+      const rows = [
+        cols.join(","),
+        ...data.events.map((e) =>
+          cols.map((c) => `"${(e[c] ?? "").toString().replace(/"/g, '""')}"`).join(",")
+        ),
+      ];
       const blob = new Blob([rows.join("\n")], { type: "text/csv" });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `soc-events-${Date.now()}.csv`; a.click();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `soc-events-${Date.now()}.csv`;
+      a.click();
     } else {
       const blob = new Blob([JSON.stringify(data.events, null, 2)], { type: "application/json" });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `soc-events-${Date.now()}.json`; a.click();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `soc-events-${Date.now()}.json`;
+      a.click();
     }
   };
 
-  /* ── Derived ── */
-  const sortableCol = (col, label) => (
-    <th className={`le-th le-sortable${sort === col ? " le-th-active" : ""}`}
-      onClick={() => handleSort(col)}>
-      {label}<SortIcon active={sort === col} dir={direction} />
+  /* ── Sortable column header ── */
+  const SortTh = ({ col, label }) => (
+    <th
+      className={`le-th le-sortable${sort === col ? " le-th-active" : ""}`}
+      onClick={() => handleSort(col)}
+    >
+      {label}
+      <SortIcon active={sort === col} dir={direction} />
     </th>
   );
 
+  /* ══════ RENDER ══════ */
   return (
-    <div className="le-root">
+    <>
+      <div className="le-root">
 
-      {/* ════════════════════ TOOLBAR ═══════════════════════ */}
-      <div className="le-toolbar">
-        <div className="le-toolbar-top">
-          {/* Search */}
-          <div className="le-search-wrap">
-            <span className="le-search-icon"><SearchIcon /></span>
-            <input
-              className="le-search"
-              placeholder="Search events — title, host, user, description…"
-              value={filters.q}
-              onChange={(e) => setFilter("q", e.target.value)}
-              spellCheck={false}
-            />
-            {filters.q && (
-              <button className="le-search-clear" onClick={() => setFilter("q", "")}>✕</button>
+        {/* ── Toolbar ── */}
+        <div className="le-toolbar">
+          <div className="le-toolbar-top">
+            <div className="le-search-wrap">
+              <span className="le-search-icon"><SearchIcon /></span>
+              <input
+                className="le-search"
+                placeholder="Search events — host, user, description…"
+                value={filters.q}
+                onChange={(e) => setFilter("q", e.target.value)}
+                spellCheck={false}
+              />
+              {filters.q && (
+                <button className="le-search-clear" onClick={() => setFilter("q", "")}>✕</button>
+              )}
+            </div>
+            <div className="le-toolbar-actions">
+              <button className="le-btn le-btn-ghost" onClick={() => exportData("csv")}>
+                <DownloadIcon /> CSV
+              </button>
+              <button className="le-btn le-btn-ghost" onClick={() => exportData("json")}>
+                <DownloadIcon /> JSON
+              </button>
+              <button className="le-btn le-btn-accent" onClick={saveSearch}>
+                <StarIcon /> Save
+              </button>
+            </div>
+          </div>
+
+          <div className="le-filters">
+            <div className="le-filter-group">
+              <label className="le-filter-label">Event Type</label>
+              <select className="filter-select le-filter-select"
+                value={filters.event_type}
+                onChange={(e) => setFilter("event_type", e.target.value)}>
+                <option value="">All Types</option>
+                {EVENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="le-filter-group">
+              <label className="le-filter-label">Hostname</label>
+              <input className="filter-input le-filter-input"
+                placeholder="Filter by host…"
+                value={filters.hostname}
+                onChange={(e) => setFilter("hostname", e.target.value)} />
+            </div>
+            <div className="le-filter-group">
+              <label className="le-filter-label">User</label>
+              <input className="filter-input le-filter-input"
+                placeholder="Filter by user…"
+                value={filters.username}
+                onChange={(e) => setFilter("username", e.target.value)} />
+            </div>
+            <div className="le-filter-group">
+              <label className="le-filter-label">Sort</label>
+              <select className="filter-select le-filter-select"
+                value={`${sort}:${direction}`}
+                onChange={(e) => {
+                  const [col, dir] = e.target.value.split(":");
+                  setSort(col); setDirection(dir); setPage(1);
+                }}>
+                <option value="timestamp:desc">Time ↓ (newest)</option>
+                <option value="timestamp:asc">Time ↑ (oldest)</option>
+                <option value="event_type:asc">Type A–Z</option>
+                <option value="computer_name:asc">Host A–Z</option>
+                <option value="user:asc">User A–Z</option>
+              </select>
+            </div>
+            {hasFilters && (
+              <button className="filter-clear le-clear-all" onClick={clearFilters}>
+                ✕ Clear all
+              </button>
             )}
           </div>
-
-          {/* Actions */}
-          <div className="le-toolbar-actions">
-            <button className="le-btn le-btn-ghost" onClick={() => exportData("csv")} title="Export CSV">
-              <DownloadIcon /> CSV
-            </button>
-            <button className="le-btn le-btn-ghost" onClick={() => exportData("json")} title="Export JSON">
-              <DownloadIcon /> JSON
-            </button>
-            <button className="le-btn le-btn-accent" onClick={saveSearch} title="Save this search">
-              <StarIcon /> Save
-            </button>
-          </div>
         </div>
 
-        {/* Filter row */}
-        <div className="le-filters">
-          <div className="le-filter-group">
-            <label className="le-filter-label">Event Type</label>
-            <select className="filter-select le-filter-select"
-              value={filters.event_type}
-              onChange={(e) => setFilter("event_type", e.target.value)}>
-              <option value="">All Types</option>
-              {EVENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+        {/* ── Results panel ── */}
+        <div className="le-results-panel panel">
+          <div className="le-results-header">
+            <div className="panel-title" style={{ gap: 10 }}>
+              {loading
+                ? <><span className="le-spinner" />Searching…</>
+                : <><span className="le-result-count">{data.total.toLocaleString()}</span> events</>}
+            </div>
+            {error && <span className="le-error">⚠ {error}</span>}
+            <span className="panel-badge" style={{ marginLeft: "auto" }}>
+              Page {page} / {data.pages || 1}
+            </span>
           </div>
 
-          <div className="le-filter-group">
-            <label className="le-filter-label">Hostname</label>
-            <input className="filter-input le-filter-input" placeholder="Filter by host…"
-              value={filters.hostname}
-              onChange={(e) => setFilter("hostname", e.target.value)} />
-          </div>
-
-          <div className="le-filter-group">
-            <label className="le-filter-label">User</label>
-            <input className="filter-input le-filter-input" placeholder="Filter by user…"
-              value={filters.username}
-              onChange={(e) => setFilter("username", e.target.value)} />
-          </div>
-
-          <div className="le-filter-group">
-            <label className="le-filter-label">Sort</label>
-            <select className="filter-select le-filter-select"
-              value={`${sort}:${direction}`}
-              onChange={(e) => {
-                const [col, dir] = e.target.value.split(":");
-                setSort(col); setDirection(dir); setPage(1);
-              }}>
-              <option value="timestamp:desc">Time ↓ (newest)</option>
-              <option value="timestamp:asc">Time ↑ (oldest)</option>
-              <option value="event_type:asc">Type A–Z</option>
-              <option value="computer_name:asc">Host A–Z</option>
-              <option value="user:asc">User A–Z</option>
-            </select>
-          </div>
-
-          {hasFilters && (
-            <button className="filter-clear le-clear-all" onClick={clearFilters}>✕ Clear all</button>
-          )}
-        </div>
-      </div>
-
-      {/* ════════════════════ RESULTS ═══════════════════════ */}
-      <div className="le-results-panel panel">
-        {/* Results header */}
-        <div className="le-results-header">
-          <div className="panel-title" style={{ gap: 10 }}>
-            {loading
-              ? <><span className="le-spinner" />Searching…</>
-              : <><span className="le-result-count">{data.total.toLocaleString()}</span> events</>}
-          </div>
-          {error && <span className="le-error">⚠ {error}</span>}
-          <span className="panel-badge" style={{ marginLeft: "auto" }}>
-            Page {page} / {data.pages || 1}
-          </span>
-        </div>
-
-        {/* Table */}
-        <div className="le-table-wrap">
-          <table className="le-table">
-            <thead className="le-thead">
-              <tr>
-                {sortableCol("timestamp",     "Time")}
-                <th className="le-th le-col-eid">Event ID</th>
-                {sortableCol("event_type",    "Type")}
-                {sortableCol("computer_name", "Host")}
-                {sortableCol("user",          "User")}
-                <th className="le-th le-col-desc">Description</th>
-                <th className="le-th le-col-expand" />
-              </tr>
-            </thead>
-            <tbody>
-              {!loading && data.events.length === 0 ? (
+          <div className="le-table-wrap">
+            <table className="le-table">
+              <thead className="le-thead">
                 <tr>
-                  <td colSpan="7" className="le-empty-cell">
-                    <div className="le-empty">
-                      <div className="le-empty-icon">
-                        <SearchIcon />
-                      </div>
-                      <div className="le-empty-title">No events found</div>
-                      <div className="le-empty-sub">
-                        {hasFilters
-                          ? "Try clearing filters or broadening your search."
-                          : "No events have been ingested yet. Start the collector to begin."}
-                      </div>
-                      {hasFilters && (
-                        <button className="le-btn le-btn-ghost" style={{ marginTop: 12 }} onClick={clearFilters}>
-                          Clear filters
-                        </button>
-                      )}
-                    </div>
-                  </td>
+                  <SortTh col="timestamp"     label="Time" />
+                  <th className="le-th le-col-eid">Event ID</th>
+                  <SortTh col="event_type"    label="Type" />
+                  <SortTh col="computer_name" label="Host" />
+                  <SortTh col="user"          label="User" />
+                  <th className="le-th le-col-desc">Description</th>
+                  <th className="le-th le-col-expand" />
                 </tr>
-              ) : (
-                data.events.map((ev) => {
-                  const isOpen = expanded === ev.id;
-                  const user = ev.user
-                    ? (ev.user.includes("\\") ? ev.user.split("\\").pop() : ev.user)
-                    : "—";
-                  return (
-                    <>
+              </thead>
+              <tbody>
+                {!loading && data.events.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="le-empty-cell">
+                      <div className="le-empty">
+                        <div className="le-empty-icon"><SearchIcon /></div>
+                        <div className="le-empty-title">No events found</div>
+                        <div className="le-empty-sub">
+                          {hasFilters
+                            ? "Try clearing filters or broadening your search."
+                            : "No events ingested yet. Start the collector to begin."}
+                        </div>
+                        {hasFilters && (
+                          <button className="le-btn le-btn-ghost"
+                            style={{ marginTop: 12 }} onClick={clearFilters}>
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  data.events.map((ev) => {
+                    const isSelected = selectedEvent?.id === ev.id;
+                    const user = ev.user
+                      ? (ev.user.includes("\\") ? ev.user.split("\\").pop() : ev.user)
+                      : "—";
+                    return (
                       <tr
                         key={ev.id}
-                        className={`le-row${isOpen ? " le-row-expanded" : ""}`}
-                        onClick={() => setExpanded(isOpen ? null : ev.id)}
+                        className={`le-row${isSelected ? " le-row-selected" : ""}`}
+                        onClick={() => setSelectedEvent(isSelected ? null : ev)}
+                        title="Click to investigate"
                       >
                         <td className="le-td le-col-time">
                           <span className="le-ts">{fmtTs(ev.timestamp)}</span>
@@ -410,7 +406,10 @@ function LogExplorer() {
                         </td>
                         <td className="le-td le-col-type">
                           <span className="le-type-badge"
-                            style={{ color: etColor(ev.event_type), borderColor: `${etColor(ev.event_type)}40` }}>
+                            style={{
+                              color: etColor(ev.event_type),
+                              borderColor: `${etColor(ev.event_type)}40`,
+                            }}>
                             {highlight(ev.event_type, filters.q || filters.event_type)}
                           </span>
                         </td>
@@ -430,131 +429,90 @@ function LogExplorer() {
                           </span>
                         </td>
                         <td className="le-td le-col-expand">
-                          <span className="le-chevron"><ChevronIcon open={isOpen} /></span>
+                          <span className="le-investigate-hint">Investigate →</span>
                         </td>
                       </tr>
-
-                      {/* Expanded detail row */}
-                      {isOpen && (
-                        <tr key={`${ev.id}-detail`} className="le-detail-row">
-                          <td colSpan="7" className="le-detail-cell">
-                            <div className="le-detail">
-                              <div className="le-detail-grid">
-                                <div className="le-detail-field">
-                                  <span className="le-detail-label">Timestamp</span>
-                                  <span className="le-detail-value">{fmtTs(ev.timestamp)}</span>
-                                </div>
-                                <div className="le-detail-field">
-                                  <span className="le-detail-label">Event ID</span>
-                                  <span className="le-detail-value">{ev.event_id ?? "—"}</span>
-                                </div>
-                                <div className="le-detail-field">
-                                  <span className="le-detail-label">Event Type</span>
-                                  <span className="le-detail-value" style={{ color: etColor(ev.event_type) }}>
-                                    {ev.event_type ?? "—"}
-                                  </span>
-                                </div>
-                                <div className="le-detail-field">
-                                  <span className="le-detail-label">Computer</span>
-                                  <span className="le-detail-value le-mono-val">{ev.computer_name ?? "—"}</span>
-                                </div>
-                                <div className="le-detail-field">
-                                  <span className="le-detail-label">User</span>
-                                  <span className="le-detail-value le-mono-val">{ev.user ?? "—"}</span>
-                                </div>
-                                <div className="le-detail-field le-detail-full">
-                                  <span className="le-detail-label">Description</span>
-                                  <span className="le-detail-value le-mono-val le-desc-full">
-                                    {ev.description ?? "—"}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {data.pages > 1 && (
-          <div className="pagination le-pagination">
-            <button className="page-btn" disabled={page === 1}
-              onClick={() => setPage((p) => p - 1)}>← Prev</button>
-            <div className="le-page-nums">
-              {Array.from({ length: Math.min(data.pages, 7) }, (_, i) => {
-                const p = data.pages <= 7 ? i + 1
-                  : page <= 4 ? i + 1
-                  : page >= data.pages - 3 ? data.pages - 6 + i
-                  : page - 3 + i;
-                return (
-                  <button key={p}
-                    className={`page-btn le-page-num${page === p ? " le-page-active" : ""}`}
-                    onClick={() => setPage(p)}>{p}</button>
-                );
-              })}
-            </div>
-            <button className="page-btn" disabled={page === data.pages}
-              onClick={() => setPage((p) => p + 1)}>Next →</button>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
 
-      {/* ════════════════════ BOTTOM PANELS ════════════════ */}
-      <div className="le-bottom-row">
-
-        {/* Saved Searches */}
-        <div className="panel le-side-panel">
-          <Collapsible title="Saved Searches" count={saved.length}>
-            {saved.length === 0 ? (
-              <div className="le-side-empty">No saved searches yet. Run a search and click Save.</div>
-            ) : (
-              <ul className="le-side-list">
-                {saved.map((s) => (
-                  <li key={s.id} className="le-side-item" onClick={() => loadSaved(s)}>
-                    <span className="le-side-name">{s.name}</span>
-                    <button className="le-side-delete" onClick={(e) => deleteSaved(s.id, e)} title="Remove">✕</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Collapsible>
+          {/* Pagination */}
+          {data.pages > 1 && (
+            <div className="pagination le-pagination">
+              <button className="page-btn" disabled={page === 1}
+                onClick={() => setPage((p) => p - 1)}>← Prev</button>
+              <div className="le-page-nums">
+                {Array.from({ length: Math.min(data.pages, 7) }, (_, i) => {
+                  const p = data.pages <= 7 ? i + 1
+                    : page <= 4 ? i + 1
+                    : page >= data.pages - 3 ? data.pages - 6 + i
+                    : page - 3 + i;
+                  return (
+                    <button key={p}
+                      className={`page-btn le-page-num${page === p ? " le-page-active" : ""}`}
+                      onClick={() => setPage(p)}>{p}</button>
+                  );
+                })}
+              </div>
+              <button className="page-btn" disabled={page === data.pages}
+                onClick={() => setPage((p) => p + 1)}>Next →</button>
+            </div>
+          )}
         </div>
 
-        {/* Recent Searches */}
-        <div className="panel le-side-panel">
-          <Collapsible title="Recent Searches" count={history.length}>
-            {history.length === 0 ? (
-              <div className="le-side-empty">No history yet.</div>
-            ) : (
-              <>
+        {/* ── Bottom: Saved + History ── */}
+        <div className="le-bottom-row">
+          <div className="panel le-side-panel">
+            <Collapsible title="Saved Searches" count={saved.length}>
+              {saved.length === 0 ? (
+                <div className="le-side-empty">No saved searches yet. Run a search and click Save.</div>
+              ) : (
                 <ul className="le-side-list">
-                  {history.map((h) => (
-                    <li key={h.id} className="le-side-item" onClick={() => loadHistory(h)}>
-                      <span className="le-side-name le-history-query">
-                        {h.query}
-                      </span>
-                      <span className="le-history-meta">
-                        {h.results.toLocaleString()} results
-                      </span>
+                  {saved.map((s) => (
+                    <li key={s.id} className="le-side-item" onClick={() => loadSaved(s)}>
+                      <span className="le-side-name">{s.name}</span>
+                      <button className="le-side-delete"
+                        onClick={(e) => deleteSaved(s.id, e)} title="Remove">✕</button>
                     </li>
                   ))}
                 </ul>
-                <button className="filter-clear le-clear-history" onClick={clearHistory}>
-                  Clear history
-                </button>
-              </>
-            )}
-          </Collapsible>
-        </div>
+              )}
+            </Collapsible>
+          </div>
 
+          <div className="panel le-side-panel">
+            <Collapsible title="Recent Searches" count={history.length}>
+              {history.length === 0 ? (
+                <div className="le-side-empty">No history yet.</div>
+              ) : (
+                <>
+                  <ul className="le-side-list">
+                    {history.map((h) => (
+                      <li key={h.id} className="le-side-item" onClick={() => loadHistory(h)}>
+                        <span className="le-side-name le-history-query">{h.query}</span>
+                        <span className="le-history-meta">{h.results.toLocaleString()} results</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button className="filter-clear le-clear-history" onClick={clearHistory}>
+                    Clear history
+                  </button>
+                </>
+              )}
+            </Collapsible>
+          </div>
+        </div>
       </div>
-    </div>
+
+      {/* Investigation drawer — rendered outside the scroll root so it overlays correctly */}
+      <EventInvestigationDrawer
+        eventSummary={selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+      />
+    </>
   );
 }
 
