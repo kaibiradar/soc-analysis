@@ -17,8 +17,12 @@ export const getTimeline = () =>
 export const getMitre = () =>
   fetch("/api/mitre").then(handle);
 
-export const getEvents = ({ page = 1, perPage = 100 } = {}) => {
-  const params = new URLSearchParams({ page, per_page: perPage });
+export const getEvents = ({ page = 1, perPage = 25, q = "", event_type = "", hostname = "", username = "", sort = "timestamp", direction = "desc" } = {}) => {
+  const params = new URLSearchParams({ page, per_page: perPage, sort, direction });
+  if (q)          params.set("q",          q);
+  if (event_type) params.set("event_type", event_type);
+  if (hostname)   params.set("hostname",   hostname);
+  if (username)   params.set("username",   username);
   return fetch(`/api/events?${params}`).then(handle);
 };
 

@@ -54,25 +54,64 @@ def _serialize_alert(alert):
 
 @api_bp.route('/events', methods=['GET'])
 def get_events():
-    """Get all events with pagination"""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
-    
-    events = Event.query.order_by(Event.timestamp.desc()).paginate(page=page, per_page=per_page)
-    
+    """Get events with pagination, full-text search, filtering and sorting."""
+    page       = request.args.get('page',       1,     type=int)
+    per_page   = min(request.args.get('per_page', 25,  type=int), 200)
+    q          = request.args.get('q',           '').strip()
+    event_type = request.args.get('event_type',  '').strip()
+    hostname   = request.args.get('hostname',    '').strip()
+    username   = request.args.get('username',    '').strip()
+    sort_col   = request.args.get('sort',        'timestamp')
+    direction  = request.args.get('direction',   'desc')
+
+    query = Event.query
+
+    # Full-text search across key fields
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(
+                Event.description.ilike(like),
+                Event.computer_name.ilike(like),
+                Event.user.ilike(like),
+                Event.event_type.ilike(like),
+            )
+        )
+
+    if event_type:
+        query = query.filter(Event.event_type.ilike(f"%{event_type}%"))
+    if hostname:
+        query = query.filter(Event.computer_name.ilike(f"%{hostname}%"))
+    if username:
+        query = query.filter(Event.user.ilike(f"%{username}%"))
+
+    # Sorting
+    sortable = {
+        'timestamp':     Event.timestamp,
+        'event_type':    Event.event_type,
+        'computer_name': Event.computer_name,
+        'user':          Event.user,
+        'event_id':      Event.event_id,
+    }
+    col = sortable.get(sort_col, Event.timestamp)
+    query = query.order_by(col.asc() if direction == 'asc' else col.desc())
+
+    events = query.paginate(page=page, per_page=per_page, error_out=False)
+
     return jsonify({
-        'total': events.total,
-        'pages': events.pages,
+        'total':        events.total,
+        'pages':        events.pages,
         'current_page': page,
+        'per_page':     per_page,
         'events': [{
-            'id': e.id,
-            'event_id': e.event_id,
+            'id':            e.id,
+            'event_id':      e.event_id,
             'computer_name': e.computer_name,
-            'user': e.user,
-            'event_type': e.event_type,
-            'timestamp': e.timestamp.isoformat(),
-            'description': e.description,
-        } for e in events.items]
+            'user':          e.user,
+            'event_type':    e.event_type,
+            'timestamp':     e.timestamp.isoformat(),
+            'description':   e.description,
+        } for e in events.items],
     })
 
 @api_bp.route('/events/<int:event_id>', methods=['GET'])
