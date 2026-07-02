@@ -8,6 +8,46 @@ const handle = async (res) => {
   return res.json();
 };
 
+/**
+ * Normalize a single process entry (used for both the primary process and
+ * each item in child_process) into a guaranteed shape so components never
+ * have to guard against missing keys.
+ */
+const normalizeProcess = (raw = {}) => ({
+  process_name:    raw.process_name    ?? null,
+  pid:             raw.pid             ?? null,
+  ppid:            raw.ppid            ?? null,
+  command_line:    raw.command_line    ?? null,
+  process_path:    raw.process_path    ?? null, // optional
+  integrity_level: raw.integrity_level ?? null, // optional
+});
+
+/**
+ * Normalize the process_hierarchy payload from GET /api/events/:id into a
+ * consistent shape for the frontend:
+ *   { process_name, parent_process, child_process[], pid, ppid,
+ *     command_line, process_path, integrity_level }
+ *
+ * Accepts either `process_hierarchy` (current) or `process_tree` (legacy key
+ * some older backend responses may still use) — whichever is present.
+ */
+const normalizeProcessHierarchy = (raw) => {
+  if (!raw) return null;
+
+  const base = normalizeProcess(raw);
+  const children = Array.isArray(raw.child_process)
+    ? raw.child_process
+    : Array.isArray(raw.child_processes) // legacy plural key fallback
+      ? raw.child_processes
+      : [];
+
+  return {
+    ...base,
+    parent_process: raw.parent_process ?? null,
+    child_process:  children.map(normalizeProcess),
+  };
+};
+
 export const getStats = () =>
   fetch("/api/stats").then(handle);
 
@@ -26,8 +66,30 @@ export const getEvents = ({ page = 1, perPage = 25, q = "", event_type = "", hos
   return fetch(`/api/events?${params}`).then(handle);
 };
 
+/**
+ * Fetch a single event's full details, including related alerts and process
+ * hierarchy. Reuses the existing GET /api/events/:id endpoint — no new
+ * endpoints. The raw `process_hierarchy` / `process_tree` fields from the
+ * API are preserved on the returned object, plus a normalized `process`
+ * field for components to consume directly:
+ *
+ *   const { process } = await getEvent(id);
+ *   process.process_name
+ *   process.parent_process
+ *   process.child_process   // array, normalized, always present
+ *   process.pid
+ *   process.ppid
+ *   process.command_line
+ *   process.process_path    // optional, may be null
+ *   process.integrity_level // optional, may be null
+ */
 export const getEvent = (id) =>
-  fetch(`/api/events/${id}`).then(handle);
+  fetch(`/api/events/${id}`)
+    .then(handle)
+    .then((event) => ({
+      ...event,
+      process: normalizeProcessHierarchy(event.process_hierarchy ?? event.process_tree),
+    }));
 
 export const getAlert = (id) =>
   fetch(`/api/alerts/${id}`).then(handle);

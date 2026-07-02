@@ -127,8 +127,6 @@ function TimelineChart({ liveTimeline }) {
       Array.isArray(liveTimeline.labels) &&
       Array.isArray(liveTimeline.values)
     ) {
-      console.log("Timeline Update:", liveTimeline);
-
       const timeoutId = window.setTimeout(() => {
         setChartData(
           buildDataset(

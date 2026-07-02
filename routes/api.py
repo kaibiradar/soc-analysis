@@ -50,6 +50,103 @@ def _serialize_alert(alert):
         'event': _serialize_event(event),
     }
 
+
+def _pick(d, *keys):
+    """Return first truthy value found in dict d for any of the given keys."""
+    for k in keys:
+        v = d.get(k)
+        if v:
+            return str(v)
+    return None
+
+
+def _basename(path):
+    if not path:
+        return None
+    return path.replace("\\", "/").split("/")[-1]
+
+
+def _build_process_hierarchy(event):
+    """
+    Build the process hierarchy for an event's details, matching the fields
+    the frontend investigation drawer expects:
+        process_name, parent_process, child_process, pid, ppid,
+        command_line, process_path (optional), integrity_level (optional)
+    """
+    d = event.details or {}
+    desc = event.description or ""
+
+    # Image / process name — try structured details first, then fall back to
+    # parsing "Image:" / "Process:" out of the free-text description.
+    image = _pick(d, "Image", "image", "ProcessName", "process_name")
+    if not image and desc:
+        import re
+        m = re.search(r"(?:Image|Process):\s*([^\n\r,]+)", desc, re.IGNORECASE)
+        if m:
+            image = m.group(1).strip()
+
+    # Command line
+    cmd_line = _pick(d, "CommandLine", "command_line", "cmdLine")
+    if not cmd_line and desc:
+        import re
+        m = re.search(r"CommandLine:\s*([^\n\r]+)", desc, re.IGNORECASE)
+        if m:
+            cmd_line = m.group(1).strip()
+
+    parent_image = _pick(d, "ParentImage", "parent_image", "ParentProcessName")
+    pid           = _pick(d, "ProcessId",       "pid",       "ProcessID")
+    ppid          = _pick(d, "ParentProcessId", "parent_pid", "ParentProcessID")
+
+    # Optional fields
+    process_path    = image  # full path, same source as image
+    integrity_level = _pick(
+        d, "IntegrityLevel", "integrity_level", "Integrity"
+    )
+
+    hierarchy = {
+        "process_name":    _basename(image) or image,
+        "parent_process":  _basename(parent_image) or parent_image,
+        "pid":             pid,
+        "ppid":            ppid,
+        "command_line":    cmd_line,
+        "process_path":    process_path,       # optional
+        "integrity_level": integrity_level,    # optional
+        "child_process":   [],
+    }
+
+    # Best-effort child process lookup: find ProcessCreate events on the same
+    # host, within a ±60s window, whose ParentImage matches this event's Image.
+    try:
+        if image and event.timestamp:
+            from datetime import timedelta
+            window_start = event.timestamp - timedelta(seconds=60)
+            window_end   = event.timestamp + timedelta(seconds=60)
+            children = Event.query.filter(
+                Event.event_type == "ProcessCreate",
+                Event.computer_name == event.computer_name,
+                Event.timestamp.between(window_start, window_end),
+                Event.id != event.id,
+            ).limit(10).all()
+
+            for child in children:
+                cd = child.details or {}
+                child_parent = cd.get("ParentImage") or cd.get("parent_image") or ""
+                if child_parent and _basename(child_parent) == _basename(image):
+                    child_img = cd.get("Image") or cd.get("image") or ""
+                    hierarchy["child_process"].append({
+                        "process_name":    _basename(child_img) or child_img,
+                        "pid":             str(cd.get("ProcessId") or cd.get("pid") or ""),
+                        "ppid":            str(cd.get("ParentProcessId") or cd.get("parent_pid") or ""),
+                        "command_line":    cd.get("CommandLine") or cd.get("command_line") or "",
+                        "process_path":    child_img or None,
+                        "integrity_level": cd.get("IntegrityLevel") or cd.get("integrity_level") or None,
+                    })
+    except Exception:
+        pass  # child lookup is best-effort, never fail the request over it
+
+    return hierarchy
+
+
 # ==================== EVENTS ====================
 
 @api_bp.route('/events', methods=['GET'])
@@ -116,7 +213,7 @@ def get_events():
 
 @api_bp.route('/events/<int:event_id>', methods=['GET'])
 def get_event(event_id):
-    """Get specific event details including related alerts."""
+    """Get specific event details including related alerts and process hierarchy."""
     event = Event.query.get_or_404(event_id)
 
     # Related alerts for this event
@@ -124,16 +221,23 @@ def get_event(event_id):
         joinedload(Alert.rule)
     ).filter_by(event_id=event_id).order_by(Alert.created_at.desc()).all()
 
+    # ── Process hierarchy: extract from event.details (Sysmon stores these) ──
+    process_hierarchy = _build_process_hierarchy(event)
+
     return jsonify({
-        'id':            event.id,
-        'event_id':      event.event_id,
-        'computer_name': event.computer_name,
-        'user':          event.user,
-        'event_type':    event.event_type,
-        'timestamp':     event.timestamp.isoformat(),
-        'description':   event.description,
-        'details':       event.details,
-        'created_at':    event.created_at.isoformat(),
+        'id':                event.id,
+        'event_id':          event.event_id,
+        'computer_name':     event.computer_name,
+        'user':              event.user,
+        'event_type':        event.event_type,
+        'timestamp':         event.timestamp.isoformat(),
+        'description':       event.description,
+        'details':           event.details,
+        'created_at':        event.created_at.isoformat(),
+        'process_hierarchy': process_hierarchy,
+        # Kept for backwards compatibility with any existing frontend code
+        # that still reads `process_tree`.
+        'process_tree':      process_hierarchy,
         'alerts': [{
             'id':          a.id,
             'title':       a.title,

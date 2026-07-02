@@ -49,6 +49,22 @@ function fmtTs(ts) {
   });
 }
 
+/**
+ * Best-effort process name for the table's optional "Process" column.
+ * The /api/events list endpoint doesn't return structured process fields
+ * (only /api/events/:id does, via event.process), so this does a cheap
+ * client-side regex pull from the description text — good enough for a
+ * quick-glance column, not a substitute for the drawer's real process data.
+ */
+function extractProcessName(description = "") {
+  if (!description) return null;
+  const m = description.match(/(?:Image|Process):\s*([^\n\r,]+)/i);
+  if (!m) return null;
+  const raw = m[1].trim();
+  if (!raw) return null;
+  return raw.replace(/\\/g, "/").split("/").pop();
+}
+
 function loadLS(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
@@ -101,6 +117,16 @@ const SortIcon = ({ active, dir }) => (
   </svg>
 );
 
+const ProcessTreeIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+    strokeLinecap="round" strokeLinejoin="round" style={{ width: 11, height: 11 }}>
+    <line x1="6" y1="3" x2="6" y2="15" />
+    <circle cx="18" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M18 9a9 9 0 0 1-9 9" />
+  </svg>
+);
+
 /* ── Collapsible ── */
 function Collapsible({ title, count, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -116,6 +142,19 @@ function Collapsible({ title, count, children, defaultOpen = true }) {
   );
 }
 
+/* ── Sortable column header — single definition, stable reference, driven by props ── */
+function SortTh({ col, label, sort, direction, onSort }) {
+  return (
+    <th
+      className={`le-th le-sortable${sort === col ? " le-th-active" : ""}`}
+      onClick={() => onSort(col)}
+    >
+      {label}
+      <SortIcon active={sort === col} dir={direction} />
+    </th>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════ */
 function LogExplorer() {
   const EMPTY_FILTERS = { q: "", event_type: "", hostname: "", username: "" };
@@ -128,10 +167,32 @@ function LogExplorer() {
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState("");
   const [selectedEvent, setSelectedEvent] = useState(null);
+  // When set (e.g. "process-tree"), tells the drawer which section to
+  // scroll to as soon as the event finishes loading.
+  const [scrollTarget,  setScrollTarget]  = useState(null);
   const [saved,         setSaved]         = useState(() => loadLS(LS_SAVED,   []));
   const [history,       setHistory]       = useState(() => loadLS(LS_HISTORY, []));
 
   const abortRef = useRef(null);
+
+  /* ── Record a completed search into history ── */
+  const recordHistory = useCallback((total, currentFilters, currentSort, currentDirection) => {
+    if (!total) return;
+    const entry = {
+      id: Date.now(),
+      query: currentFilters.q || "(filtered)",
+      filters: { ...currentFilters },
+      sort: currentSort,
+      direction: currentDirection,
+      results: total,
+      ts: new Date().toISOString(),
+    };
+    setHistory((prev) => {
+      const next = [entry, ...prev.filter((h) => h.query !== entry.query)].slice(0, MAX_HISTORY);
+      saveLS(LS_HISTORY, next);
+      return next;
+    });
+  }, []);
 
   /* ── Load events ── */
   const load = useCallback(async () => {
@@ -147,34 +208,23 @@ function LogExplorer() {
         event_type: filters.event_type,
         hostname:   filters.hostname,
         username:   filters.username,
+        signal:     ctrl.signal, // actually cancel the in-flight request, not just ignore its response
       });
-      if (!ctrl.signal.aborted) setData(d);
+      if (!ctrl.signal.aborted) {
+        setData(d);
+        // Record history right after a successful search completes, instead of
+        // watching data.total — watching the total misses history entries whenever
+        // two different searches happen to return the same result count.
+        recordHistory(d.total, filters, sort, direction);
+      }
     } catch (e) {
       if (!ctrl.signal.aborted) setError(e.message ?? "Search failed");
     } finally {
       if (!ctrl.signal.aborted) setLoading(false);
     }
-  }, [filters, page, sort, direction]);
+  }, [filters, page, sort, direction, recordHistory]);
 
   useEffect(() => { load(); }, [load]);
-
-  /* ── Record history ── */
-  useEffect(() => {
-    if (!data.total) return;
-    const entry = {
-      id: Date.now(),
-      query: filters.q || "(filtered)",
-      filters: { ...filters },
-      sort, direction,
-      results: data.total,
-      ts: new Date().toISOString(),
-    };
-    setHistory((prev) => {
-      const next = [entry, ...prev.filter((h) => h.query !== entry.query)].slice(0, MAX_HISTORY);
-      saveLS(LS_HISTORY, next);
-      return next;
-    });
-  }, [data.total]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Sort toggle ── */
   const handleSort = (col) => {
@@ -221,6 +271,18 @@ function LogExplorer() {
   };
   const clearHistory = () => { setHistory([]); saveLS(LS_HISTORY, []); };
 
+  /* ── Quick action: open the drawer straight to Process Tree ── */
+  const openProcessTree = (ev, e) => {
+    e.stopPropagation(); // don't also trigger the row's own onClick
+    setSelectedEvent(ev);
+    setScrollTarget("process-tree");
+  };
+
+  const closeDrawer = () => {
+    setSelectedEvent(null);
+    setScrollTarget(null);
+  };
+
   /* ── Export ── */
   const exportData = (fmt) => {
     if (fmt === "csv") {
@@ -244,17 +306,6 @@ function LogExplorer() {
       a.click();
     }
   };
-
-  /* ── Sortable column header ── */
-  const SortTh = ({ col, label }) => (
-    <th
-      className={`le-th le-sortable${sort === col ? " le-th-active" : ""}`}
-      onClick={() => handleSort(col)}
-    >
-      {label}
-      <SortIcon active={sort === col} dir={direction} />
-    </th>
-  );
 
   /* ══════ RENDER ══════ */
   return (
@@ -355,11 +406,12 @@ function LogExplorer() {
             <table className="le-table">
               <thead className="le-thead">
                 <tr>
-                  <SortTh col="timestamp"     label="Time" />
+                  <SortTh col="timestamp"     label="Time" sort={sort} direction={direction} onSort={handleSort} />
                   <th className="le-th le-col-eid">Event ID</th>
-                  <SortTh col="event_type"    label="Type" />
-                  <SortTh col="computer_name" label="Host" />
-                  <SortTh col="user"          label="User" />
+                  <SortTh col="event_type"    label="Type" sort={sort} direction={direction} onSort={handleSort} />
+                  <SortTh col="computer_name" label="Host" sort={sort} direction={direction} onSort={handleSort} />
+                  <SortTh col="user"          label="User" sort={sort} direction={direction} onSort={handleSort} />
+                  <th className="le-th le-col-process">Process</th>
                   <th className="le-th le-col-desc">Description</th>
                   <th className="le-th le-col-expand" />
                 </tr>
@@ -367,7 +419,7 @@ function LogExplorer() {
               <tbody>
                 {!loading && data.events.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="le-empty-cell">
+                    <td colSpan="8" className="le-empty-cell">
                       <div className="le-empty">
                         <div className="le-empty-icon"><SearchIcon /></div>
                         <div className="le-empty-title">No events found</div>
@@ -391,6 +443,7 @@ function LogExplorer() {
                     const user = ev.user
                       ? (ev.user.includes("\\") ? ev.user.split("\\").pop() : ev.user)
                       : "—";
+                    const processName = extractProcessName(ev.description);
                     return (
                       <tr
                         key={ev.id}
@@ -423,13 +476,27 @@ function LogExplorer() {
                             {highlight(user, filters.q || filters.username)}
                           </span>
                         </td>
+                        <td className="le-td le-col-process">
+                          <span className="le-mono">
+                            {processName ? highlight(processName, filters.q) : "—"}
+                          </span>
+                        </td>
                         <td className="le-td le-col-desc">
                           <span className="le-desc">
                             {highlight((ev.description ?? "").slice(0, 120), filters.q)}
                           </span>
                         </td>
                         <td className="le-td le-col-expand">
-                          <span className="le-investigate-hint">Investigate →</span>
+                          <div className="le-row-actions">
+                            <button
+                              className="le-view-tree-btn"
+                              onClick={(e) => openProcessTree(ev, e)}
+                              title="Open investigation drawer at Process Tree"
+                            >
+                              <ProcessTreeIcon /> Process Tree
+                            </button>
+                            <span className="le-investigate-hint">Investigate →</span>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -510,7 +577,8 @@ function LogExplorer() {
       {/* Investigation drawer — rendered outside the scroll root so it overlays correctly */}
       <EventInvestigationDrawer
         eventSummary={selectedEvent}
-        onClose={() => setSelectedEvent(null)}
+        onClose={closeDrawer}
+        scrollToSection={scrollTarget}
       />
     </>
   );

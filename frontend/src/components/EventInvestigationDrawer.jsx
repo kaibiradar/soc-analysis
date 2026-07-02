@@ -3,14 +3,21 @@
  *
  * A full side-panel investigation view opened when a user clicks an event
  * in the Log Explorer. Fetches full event details (including related alerts)
- * from /api/events/:id and renders 6 sections:
+ * from /api/events/:id and renders:
  *
- *   1. Event Details      — core fields in a structured grid
- *   2. Process Details    — process/file/network fields parsed from description & details
- *   3. MITRE ATT&CK       — mapped techniques derived from alert rule tags
- *   4. IOC Information    — IPs, hashes, domains, URLs extracted from description/details
- *   5. Related Alerts     — alerts fired by this event
- *   6. Recommended Response — playbook steps keyed to event type
+ *   0. Investigation Summary — at-a-glance severity / MITRE / IOC / alert counts
+ *   1. Event Details         — core fields in a structured grid
+ *   2. Process Details       — process/file/network fields parsed from description & details
+ *   3. Process Tree          — structured process ancestry (parent → current → children)
+ *                              from event.process, supplied by GET /api/events/:id
+ *   4. MITRE ATT&CK          — mapped techniques derived from alert rule tags
+ *   5. IOC Information       — IPs, hashes, domains, URLs extracted from description/details
+ *   6. Related Alerts        — alerts fired by this event
+ *   7. Recommended Response  — playbook steps keyed to event type
+ *   8. Event Timeline        — chronological view of the event + related alerts
+ *   9. Investigation Status  — local status tracker
+ *   10. Analyst Notes        — local free-text notes
+ *   Footer                   — Close / Export JSON / Mark Resolved
  */
 import { useEffect, useMemo, useState } from "react";
 import { getEvent } from "../api/api";
@@ -110,6 +117,8 @@ const PLAYBOOKS = {
   ],
 };
 
+const INVESTIGATION_STATUSES = ["Open", "In Progress", "Resolved", "False Positive"];
+
 /* ── Helpers ──────────────────────────────────────────────── */
 
 function fmtTs(ts) {
@@ -170,7 +179,7 @@ function extractProcessDetails(event) {
   return fields;
 }
 
-/* ── Sub-components ───────────────────────────────────────── */
+/* ── Icons ────────────────────────────────────────────────── */
 
 const CloseIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -179,6 +188,25 @@ const CloseIcon = () => (
     <line x1="6"  y1="6"  x2="18" y2="18" />
   </svg>
 );
+
+const DownloadIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+    strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13 }}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+);
+
+const CheckIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+    strokeLinecap="round" strokeLinejoin="round" style={{ width: 13, height: 13 }}>
+    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+    <polyline points="22 4 12 14.01 9 11.01" />
+  </svg>
+);
+
+/* ── Sub-components ───────────────────────────────────────── */
 
 const Section = ({ title, icon, children, accent }) => (
   <div className="eid-section" style={accent ? { "--eid-accent": accent } : {}}>
@@ -201,12 +229,38 @@ const IocPill = ({ value, color }) => (
   <span className="eid-ioc-pill" style={{ color, borderColor: `${color}40` }}>{value}</span>
 );
 
+const SummaryCard = ({ label, value, color }) => (
+  <div className="eid-summary-card">
+    <span className="eid-summary-label">{label}</span>
+    <span className="eid-summary-value" style={color ? { color } : undefined}>{value}</span>
+  </div>
+);
+
+/** Single node in the process ancestry diagram. */
+const ProcessNode = ({ name, tag, variant }) => (
+  <div className={`eid-proc-node eid-proc-node-${variant}`}>
+    <span className="eid-proc-node-name">{name || "Unknown process"}</span>
+    <span className="eid-proc-node-tag">{tag}</span>
+  </div>
+);
+
+/** Connector arrow between stacked process nodes. */
+const ProcTreeArrow = () => (
+  <div className="eid-proc-arrow" aria-hidden="true">
+    <span className="eid-proc-arrow-stem" />
+    <span className="eid-proc-arrow-head">▼</span>
+  </div>
+);
+
 /* ── Main component ───────────────────────────────────────── */
 
 function EventInvestigationDrawer({ eventSummary, onClose }) {
-  const [event,   setEvent]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const [event,       setEvent]       = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(null);
+  // Sections 8 & 9 — local state only, no backend persistence
+  const [invStatus,   setInvStatus]   = useState("Open");
+  const [analystNote, setAnalystNote] = useState("");
 
   /* Fetch full event on open */
   useEffect(() => {
@@ -214,6 +268,8 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
     setLoading(true);
     setError(null);
     setEvent(null);
+    setInvStatus("Open");
+    setAnalystNote("");
 
     getEvent(eventSummary.id)
       .then(setEvent)
@@ -233,6 +289,11 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
     if (!event) return { ips: [], hashes: [], domains: [], urls: [] };
     return extractIocs(event.description || "", event.details || {});
   }, [event]);
+
+  const totalIocs = useMemo(
+    () => Object.values(iocs).reduce((sum, arr) => sum + arr.length, 0),
+    [iocs]
+  );
 
   const procDetails = useMemo(() => {
     if (!event) return {};
@@ -263,6 +324,25 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
 
   const topAlert = event?.alerts?.[0] ?? null;
   const severity = topAlert?.severity ?? null;
+
+  /* ── Footer actions ── */
+  const exportJson = () => {
+    if (!event) return;
+    const payload = {
+      ...event,
+      investigation_status: invStatus,
+      analyst_notes: analystNote,
+      exported_at: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `event-${event.id ?? "investigation"}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const markResolved = () => setInvStatus("Resolved");
 
   if (!eventSummary) return null;
 
@@ -319,6 +399,32 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
 
           {event && (
             <>
+              {/* ── 0. Investigation Summary ── */}
+              <Section title="Investigation Summary" accent="#22d3a0"
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                }>
+                <div className="eid-summary-grid">
+                  <SummaryCard
+                    label="Severity"
+                    value={severity ? severity.toUpperCase() : "N/A"}
+                    color={severity ? undefined : "#7a9bbf"}
+                  />
+                  <SummaryCard label="Event Type" value={event.event_type ?? "—"} color={etColor(event.event_type)} />
+                  <SummaryCard label="Host" value={event.computer_name ?? "—"} />
+                  <SummaryCard label="User" value={event.user ?? "—"} />
+                  <SummaryCard label="MITRE Techniques" value={mitreTechniques.length} color="#a78bfa" />
+                  <SummaryCard label="IOCs Found" value={totalIocs} color="#fbbf24" />
+                  <SummaryCard label="Related Alerts" value={event.alerts?.length ?? 0} color="#f43f5e" />
+                  <SummaryCard label="Status" value={invStatus} color="#22d3a0" />
+                </div>
+              </Section>
+
               {/* ── 1. Event Details ── */}
               <Section title="Event Details" accent={etColor(event.event_type)}
                 icon={
@@ -374,7 +480,78 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
                 </Section>
               )}
 
-              {/* ── 3. MITRE ATT&CK ── */}
+              {/* ── 3. Process Tree ── */}
+              <Section title="Process Tree" accent="#f97316"
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 9a9 9 0 0 1-9 9" />
+                  </svg>
+                }>
+                {(() => {
+                  const proc = event.process;
+                  const children = proc?.child_process || [];
+                  const hasData = proc && (
+                    proc.process_name || proc.parent_process ||
+                    proc.pid || proc.ppid || proc.command_line || children.length > 0
+                  );
+
+                  if (!hasData) {
+                    return <div className="eid-empty">// No process hierarchy data available for this event</div>;
+                  }
+
+                  const childNames = children.map((c) => c.process_name).filter(Boolean).join(", ");
+
+                  return (
+                    <>
+                      {/* ── Ancestry diagram ── */}
+                      <div className="eid-proc-tree">
+                        {proc.parent_process && (
+                          <>
+                            <ProcessNode name={proc.parent_process} tag="Parent" variant="ancestor" />
+                            <ProcTreeArrow />
+                          </>
+                        )}
+
+                        <ProcessNode name={proc.process_name} tag="Current" variant="current" />
+
+                        {children.length > 0 && (
+                          <>
+                            <ProcTreeArrow />
+                            <div className="eid-proc-children">
+                              {children.map((c, i) => (
+                                <ProcessNode
+                                  key={`${c.process_name ?? "child"}-${i}`}
+                                  name={c.process_name}
+                                  tag="Child"
+                                  variant="child"
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* ── Field grid ── */}
+                      <div className="eid-grid" style={{ marginTop: 16 }}>
+                        <Field label="Process Name"   value={proc.process_name}   mono />
+                        <Field label="Parent Process" value={proc.parent_process} mono />
+                        <Field label="Child Process"  value={childNames || null}  mono full />
+                        <Field label="PID"            value={proc.pid}            mono />
+                        <Field label="PPID"           value={proc.ppid}           mono />
+                        <Field label="Command Line"   value={proc.command_line}   mono full />
+                        {proc.process_path    && <Field label="Executable Path"  value={proc.process_path}    mono full />}
+                        {proc.integrity_level && <Field label="Integrity Level"  value={proc.integrity_level} mono />}
+                      </div>
+                    </>
+                  );
+                })()}
+              </Section>
+
+              {/* ── 4. MITRE ATT&CK ── */}
               <Section title="MITRE ATT&CK Mapping" accent="#a78bfa"
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -406,7 +583,7 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
                 )}
               </Section>
 
-              {/* ── 4. IOC Information ── */}
+              {/* ── 5. IOC Information ── */}
               <Section title="IOC Information" accent="#fbbf24"
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -446,7 +623,7 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
                 )}
               </Section>
 
-              {/* ── 5. Related Alerts ── */}
+              {/* ── 6. Related Alerts ── */}
               <Section
                 title={`Related Alerts (${event.alerts?.length ?? 0})`}
                 accent="#f43f5e"
@@ -484,7 +661,7 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
                 )}
               </Section>
 
-              {/* ── 6. Recommended Response ── */}
+              {/* ── 7. Recommended Response ── */}
               <Section title="Recommended Response" accent="#22d3a0"
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -502,8 +679,112 @@ function EventInvestigationDrawer({ eventSummary, onClose }) {
                   ))}
                 </ol>
               </Section>
+
+              {/* ── 8. Event Timeline ── */}
+              <Section title="Event Timeline" accent="#818cf8"
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                }>
+                <div className="eid-timeline">
+                  <div className="eid-tl-item eid-tl-current">
+                    <span className="eid-tl-dot" />
+                    <div className="eid-tl-body">
+                      <span className="eid-tl-time">{fmtTs(event.timestamp)}</span>
+                      <span className="eid-tl-label" style={{ color: etColor(event.event_type) }}>
+                        {event.event_type}
+                      </span>
+                      <span className="eid-tl-sub">{(event.description || "").slice(0, 80)}</span>
+                    </div>
+                  </div>
+                  {(event.alerts || []).map((a) => (
+                    <div className="eid-tl-item" key={a.id}>
+                      <span className="eid-tl-dot eid-tl-alert-dot" />
+                      <div className="eid-tl-body">
+                        <span className="eid-tl-time">{fmtTs(a.created_at)}</span>
+                        <span className={`sev-badge sev-${a.severity}`} style={{ fontSize: 9 }}>{a.severity}</span>
+                        <span className="eid-tl-sub">{a.title}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {(!event.alerts || event.alerts.length === 0) && (
+                    <div className="eid-empty" style={{ paddingLeft: 20 }}>
+                      // No related timeline entries
+                    </div>
+                  )}
+                </div>
+              </Section>
+
+              {/* ── 9. Investigation Status ── */}
+              <Section title="Investigation Status" accent="#fbbf24"
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                }>
+                <div className="eid-status-row">
+                  {INVESTIGATION_STATUSES.map((s) => (
+                    <button
+                      key={s}
+                      className={`eid-status-btn${invStatus === s ? " eid-status-active" : ""}`}
+                      onClick={() => setInvStatus(s)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <div className="eid-status-note">
+                  Status: <strong>{invStatus}</strong>
+                  <span className="eid-status-local">&nbsp;· local only</span>
+                </div>
+              </Section>
+
+              {/* ── 10. Analyst Notes ── */}
+              <Section title="Analyst Notes" accent="#7a9bbf"
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                }>
+                <textarea
+                  className="eid-notes"
+                  placeholder="Add investigation notes… (local only, not persisted)"
+                  value={analystNote}
+                  onChange={(e) => setAnalystNote(e.target.value)}
+                  rows={4}
+                />
+              </Section>
             </>
           )}
+        </div>
+
+        {/* ── Footer Actions ── */}
+        <div className="eid-footer">
+          <button className="eid-footer-btn eid-footer-btn-ghost" onClick={onClose}>
+            <CloseIcon /> Close
+          </button>
+          <button
+            className="eid-footer-btn eid-footer-btn-ghost"
+            onClick={exportJson}
+            disabled={!event}
+            title={event ? "Export this event as JSON" : "Waiting for event to load…"}
+          >
+            <DownloadIcon /> Export JSON
+          </button>
+          <button
+            className="eid-footer-btn eid-footer-btn-accent"
+            onClick={markResolved}
+            disabled={!event || invStatus === "Resolved"}
+          >
+            <CheckIcon /> Mark Resolved
+          </button>
         </div>
       </aside>
     </div>

@@ -13,6 +13,11 @@ venv/
 .venv/
 .env/
 
+# Environment secrets
+.env
+.env.*
+!.env.example
+
 # VS Code
 .vscode/
 
@@ -23,3 +28,11 @@ logs/
 # OS Files
 Thumbs.db
 .DS_Store
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+coverage/
+frontend/dist/
+frontend/build/

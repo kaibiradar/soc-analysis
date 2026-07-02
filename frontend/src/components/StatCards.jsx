@@ -43,8 +43,8 @@ function StatCards({ liveStats = null }) {
   useEffect(() => {
     const refreshStats = () => {
       getStats()
-        .then((response) => {
-          setStats(response.data ?? response);
+        .then((data) => {
+          setStats(data);
           setError(null);
         })
         .catch((e) => setError(e.message));
